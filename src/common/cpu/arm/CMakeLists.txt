@@ -1,5 +1,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright 2026 the ScarletNX contributors
+# Several runtime configurations can request this shared backend.
+if(TARGET snx_arm_llvm)
+    return()
+endif()
 # Kept separate from the A64 state ABI and emitters. Host-target LLVM modules can
 # contain either backend, but their guest function signatures are not interchangeable.
 add_library(snx_arm_rt STATIC fp_helpers.c crypto_helpers.c)

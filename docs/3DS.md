@@ -2,14 +2,17 @@
 <!-- Copyright 2026 the ScarletNX contributors -->
 # Nintendo 3DS port
 
-## Status: stage 1 + stage 2a + initial stage 2b
+## Status: stage 1 + stage 2a + stages 2b1/2b2
 
-`scarletnx-3ds` can extract **decrypted application CIAs**. It is not yet a
-CIA-to-native compiler or a working 3DS runtime. Stage 2 is split into extraction/
-memory (2a, implemented) and ARM11 AOT integration (2b, in progress). The first
-2b increment adds an opt-in ISA profile and checked-memory ABI with static AOT
-witnesses, not a production extract/compile/run pipeline. Stages 3–6 remain pending. No firmware, keys, game assets, Azahar CPU JIT/interpreter, DSP or
-PICA renderer are included.
+`scarletnx-3ds` extracts **decrypted application CIAs**. With `SNX_3DS_AOT=ON`,
+it also performs **extract -> offline static AOT -> native module -> checked
+ARM/Thumb execution** for small integer images. The asset-free end-to-end gate
+passes; this is **not a general 3DS runtime or commercial-title support**.
+Text is initially capped at **4096 bytes**, VFP/exclusives remain unsupported,
+and only SVC 0x03 (ExitProcess) is handled. Stage 2 is still incomplete: scalable
+discovery, full ARM11 semantics and cache/resume remain work. Stages 3–6 remain
+pending. No firmware, keys, game assets, Azahar CPU engine, DSP or PICA renderer
+are included.
 
 Implemented:
 
@@ -40,8 +43,19 @@ Implemented:
   controller, including aliases, R/W/X, whole-range multiword RAM validation and
   ordinary MMIO. Every instruction checks execute permission and code identity.
   Static O0/O2 native witnesses execute against this adapter without LLVM/JIT
-  linked into their executables. **Automatic process setup and CIA execution
-  are not yet connected.**
+  linked into their executables.
+- Stage 2b2: raw ExHeader/expanded `.code` revalidation, RX/R/RW process mappings,
+  zeroed page-appended BSS, guarded stack and one private initial TLS page.
+  `TPIDRURO` points at this page; this is not a thread scheduler or kernel.
+- Optional `scarletnx-3ds-aot`: separate offline LLVM compiler and native host
+  linker, private staging/publication, versioned module ABI and exact image
+  identity. Every aligned ARM word and Thumb halfword in declared text gets a
+  one-instruction native block ahead of execution. This bounded exhaustive
+  strategy includes indirect targets without guessing code/data or JIT fallback.
+- Native loader/dispatcher checks ABI, ISA, memory mode, CPU sizes, table counts
+  and image identity. It dispatches on PC + CPSR.T, enforces execution permission
+  and a block budget, and reports missing entries, faults and unsupported SVCs.
+  The runtime and generated modules do **not** link LLVM or an interpreter/JIT.
 
 ```sh
 build/3ds/scarletnx-3ds -x --output work/my-title game.cia
@@ -58,16 +72,25 @@ validation is still stage-2b work. Keep the input and output parent trusted and
 not concurrently modified; extraction is not a sandbox against hostile host
 processes racing parent directory changes.
 
-`-x`/`--extract` stops after extraction. Without it the driver extracts, then
-returns an explicit unsupported error **before** compilation or guest execution.
-The GUI follows that default path; it cannot run a title yet. `--model old|new`
-selects the board profile (default Old); it does not change the extracted code.
-`--board-info` prints physical regions without allocating RAM. Exit codes:
+`-x`/`--extract` always stops after extraction. Without it, the default build
+(`SNX_3DS_AOT=OFF`) still returns an explicit missing-AOT error. In an AOT-enabled
+build the driver invokes the adjacent compiler, waits for native linking, then
+loads `<extracted>/native/code.so`. `native/code.o` is retained for review.
+There is no compilation during dispatch and no reuse of existing extraction or
+native outputs. A failed compile removes private native staging; the successfully
+extracted tree remains. The GUI uses this same driver path, not a separate engine.
 
-- 0: help, board information, or successful extract-only operation.
-- 1: malformed/inconsistent data, IO/limit failure, or existing destination.
+`--max-blocks N` selects a 1..10000000 instruction-block budget (default 100000).
+`--model old|new` selects RAM backing (default Old), not a different ISA or
+compiler. `--board-info` prints physical regions without allocating RAM.
+`Guest ExitProcess: r0=...` prints a register diagnostic, **not a POSIX guest exit
+status**. Successful handling of SVC 0x03 returns host status zero. Exit codes:
+
+- 0: help/info, extract-only success, or handled guest ExitProcess.
+- 1: malformed data, IO/limit/existing-output failure, ABI mismatch or guest fault.
 - 2: invalid CLI arguments or missing/non-CIA file path.
-- 3: unsupported encrypted/type variant, or missing ARM11 AOT/execution stage.
+- 3: unsupported format/ISA-backend/SVC, disabled/missing compiler, text-size cap,
+  missing static target or exhausted execution budget.
 
 ### Current limits and trust
 
@@ -83,8 +106,21 @@ are refused to prevent log/banner injection. Larger/unsupported inputs fail clos
 signatures, certificate trust, ticket rights and ExHeader access-descriptor
 signatures are not authenticated. RomFS superblock and entire CIA-content
 hashes are checked, but the internal IVFC hash tree is not separately verified.
-No untrusted extracted code is executed. Future AOT/HLE must not mistake these
-checks or an editable extraction manifest for authenticated console permissions.
+AOT execution is opt-in and **not a host security sandbox**. Run only images you
+trust: compiler correctness is not isolation, and native loading can execute host
+constructors before descriptor validation. The CLI only loads its freshly built
+private output, never a preexisting cache. Do not treat ABI/hash checks, host
+native modules or an editable extraction manifest as authenticated permissions.
+
+The image loader derives layout from raw ExHeader and requires exact page-packed
+expanded `.code`; it ignores `manifest.ini` for execution. Its compatibility hash
+covers a versioned domain, full ExHeader and full expanded code. It is not yet a
+complete cache key (CIA/resources, compiler/build/configuration versions and
+resume policy still need a separate design). Initial AOT also requires a
+word-multiple declared text length. Text-page padding beyond declared text has
+no static entry, even if its page is executable. No scheduling, events, service
+IPC, resource mappings, handles or device support are implied by the initial
+private TLS/stack setup.
 
 ### Build and test
 
@@ -114,7 +150,23 @@ This requires a native LLVM SDK (select with `SNX_LLVM_CONFIG` if needed).
 `SNX_TEST_ARM_DIFF=ON` additionally requires Python `unicorn==2.1.4`, and enables
 ARM11 MPCore plus shared A57 integer/VFP/NEON/Thumb regressions. See
 `src/common/cpu/arm/README.md` for the codegen contract and exact limitations.
-The CLI behavior is unchanged even when these test options are enabled.
+Those test options alone do not enable the pipeline. To build/run it on a
+**native 64-bit Linux host** with Clang and the LLVM SDK:
+
+```sh
+cmake -S . -B build/ctr-aot -DSNX_BUILD_NX=OFF -DSNX_BUILD_GNUABI=OFF \
+  -DSNX_BUILD_GUI=OFF -DSNX_3DS_AOT=ON
+cmake --build build/ctr-aot
+ctest --test-dir build/ctr-aot --output-on-failure
+build/ctr-aot/scarletnx-3ds --output work/small-title --max-blocks 100000 small.cia
+```
+
+The compiler calls the host C compiler selected by CMake to link its PIC object;
+that compiler must remain installed at the configured path. Install both
+`scarletnx-3ds` and `scarletnx-3ds-aot` together. Other hosts/cross builds reject
+this opt-in configuration rather than substituting another execution engine.
+The runtime/module need no LLVM shared library; only the offline compiler does.
+Use both `SNX_3DS_AOT=ON` and `SNX_TEST_ARM_AOT=ON` for pipeline plus CPU tests.
 
 ## Source provenance and licensing
 
@@ -133,6 +185,9 @@ Initial 2b CPU/profile and bus code is new project C code using ARMv6K/legacy
 Thumb architectural semantics; it does not copy an Azahar CPU engine. The
 shared emitter retains its existing notices. LLVM's `mpcore` assembler model
 and Unicorn 2.1.4's ARM11 MPCore model are test references, not runtime engines.
+Stage 2b2 process mappings/BSS policy refer to Azahar `src/core/loader/ncch.cpp`
+and kernel process layout at the same revision; the new image/module/compiler/
+dispatch implementation is project C code, not an adapted Azahar CPU engine.
 Azahar is not a build dependency.
 Azahar's root license is GPLv3; individual files carry GPLv2-or-later or
 GPLv3-or-later notices. Future adaptations must retain each source's notices
@@ -148,7 +203,7 @@ user-mode API still uses a single flat `mem`/`mem_size` range.
 Mapping a sparse 3DS address space into that ABI would make holes accessible and
 would bypass process permissions, aliases and device callbacks.
 
-Before running guest code:
+Remaining requirements beyond the small-image pipeline:
 
 1. The initial ARM11 integer profile is implemented. Complete VFPv2 (including
    short-vector FPSCR behavior), missing ARMv6K instructions and alignment-mode
@@ -158,9 +213,10 @@ Before running guest code:
    transfers. Complete architectural reservation monitors/exclusives: these
    currently stop as unsupported, as do VFP/vector transfers and checked Thumb
    table branches. Do not pass an A64 `CPU*` or an NX module to an A32 block.
-3. Define/version the CTR native-module ABI and AOT block discovery/dispatch,
-   including ARM/Thumb state, indirect branches, execute checks and scheduling.
-   No silent interpreter or runtime-JIT substitution for static recompilation.
+3. Module ABI 1 and bounded exhaustive static ARM/Thumb discovery/dispatch are
+   implemented. Replace the 4 KiB exhaustive strategy with scalable discovery/
+   chunking and coverage policy, preserving indirect-target and execute checks.
+   Add validated resume/cache and scheduling. No silent interpreter/runtime JIT.
 4. Keep all CTR code under `src/3ds/`, with only `common` dependencies. Extract
    reusable host FS/tree operations from NX into common rather than linking the
    NX kernel/services/Maxwell runtime into CTR. Keep 3DS archive IDs, permissions,
@@ -169,15 +225,15 @@ Before running guest code:
 
 The page controller is now connected through an opt-in `SnxArmCheckedCPU`
 callback ABI, while the original CPU block/state ABI is deliberately unchanged.
-The adapter is not linked to the legacy execution runner. The A32 runner in `src/common/cpu/arm/exec.c` uses MCJIT and is **not** an acceptable
-substitute for static recompilation. Stage 2b must emit/load native modules ahead
-of execution, route every memory instruction through the checked ABI, and use an
-ARM11 ISA profile.
+The adapter is not linked to the legacy execution runner. The A32 runner in
+`src/common/cpu/arm/exec.c` uses MCJIT and is **not** used by this pipeline.
+`SNX_3DS_AOT` selects the separate offline compiler and ARM11/checked codegen
+options; shared A57 emission and CPU ABI defaults remain unchanged.
 
 The tick domain remains 268,111,856 Hz, with 4,481,136 base ticks per frame, as
 in Azahar. New 3DS CPU scaling is a separate future scheduler concern. There is
-still no CIA application execution, interrupt scheduling, ARM9 emulation or boot
-ROM; only asset-free statically generated CPU witnesses execute so far.
+still no interrupt scheduling, ARM9 emulation or boot ROM. Synthetic small CIAs
+now execute natively, not complete retail titles.
 
 ## Staged roadmap (2a implemented; 2b partially implemented)
 
@@ -188,12 +244,11 @@ that an unimplemented service/device succeeded.
 ### 2. CIA extraction, memory controller and static execution
 
 The extraction and independent memory-controller subset is implemented as 2a.
-Initial 2b supplies ARM11 integer profile selection, checked-memory integration
-and static native-object witnesses. There is no CTR module ABI/loader, production
-ARM/Thumb block discovery or indirect dispatch, process/stack/TLS setup from
-ExHeader, validated resume/cache, or end-to-end extract/AOT/run witness yet.
-The complete stage is **not finished** until the ARM11/memory/module integration
-and end-to-end extract/AOT/run gate below pass.
+Stage 2b1 supplies ARM11 integer profile selection and checked-memory integration.
+Stage 2b2 adds module ABI/loading, bounded exhaustive ARM/Thumb static dispatch,
+ExHeader process/stack/TLS setup and the asset-free extract/AOT/run witness.
+**Stage 2 is not complete**: scalable discovery beyond 4 KiB, full VFP/exclusives,
+validated resume/cache and wider runtime validation remain pending.
 
 Reference Azahar `src/core/file_sys/{cia_container,ticket,title_metadata,
 ncch_container,romfs_reader}.*`, `src/core/hle/service/am/am.cpp` (installation),

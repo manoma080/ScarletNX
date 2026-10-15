@@ -3,7 +3,11 @@
 #include "board/board.h"
 #include "loader/ctr_loader.h"
 #include "common.h"
+#ifdef SNX_CTR_HAVE_AOT
+#include "aot/ctr_module.h"
+#endif
 #include <ctype.h>
+#include <errno.h>
 #include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -12,9 +16,10 @@
 static void usage(FILE* out) {
     fputs("Usage: scarletnx-3ds [--model old|new] [-x] [--output NEW_DIRECTORY] [--] game.cia\n"
           "       scarletnx-3ds [--model old|new] --board-info\n"
-          "Stage 2a: decrypted application CIA extraction and memory controller.\n"
+          "Stage 2a extraction + experimental opt-in ARM11 static AOT.\n"
           "  -x, --extract   extract only (no guest execution)\n"
           "  --output DIR    new output directory; default work/3ds/<title>-<sha256>\n"
+          "  --max-blocks N  execution budget, 1..10000000 (default 100000)\n"
           "ARM11 static compilation/execution and encrypted content are not implemented.\n",
           out);
 }
@@ -31,7 +36,8 @@ static bool visible_path(const char* path) {
 int main(int argc, char** argv) {
     SnxCtrModel model = SNX_CTR_OLD;
     const char *input = NULL, *output = NULL;
-    bool info = false, positional = false, extract_only = false;
+    bool info = false, positional = false, extract_only = false, budget_set = false;
+    uint64_t max_blocks = 100000;
     SnxCtrBoard board;
     snx_tool_console();
     setvbuf(stdout, NULL, _IOLBF, 0);
@@ -52,6 +58,17 @@ int main(int argc, char** argv) {
                 return 2;
             }
             output = argv[i];
+        } else if (!positional && !strcmp(arg, "--max-blocks")) {
+            char* end = NULL;
+            if (++i == argc || argv[i][0] < '0' || argv[i][0] > '9') {
+                fputs("scarletnx-3ds: --max-blocks requires 1..10000000\n", stderr); return 2;
+            }
+            errno = 0;
+            unsigned long long n = strtoull(argv[i], &end, 10);
+            if (errno || *end || !n || n > 10000000) {
+                fputs("scarletnx-3ds: --max-blocks requires 1..10000000\n", stderr); return 2;
+            }
+            max_blocks = (uint64_t)n; budget_set = true;
         } else if (!positional && !strcmp(arg, "--model")) {
             if (++i == argc || (strcmp(argv[i], "old") && strcmp(argv[i], "new"))) {
                 fputs("scarletnx-3ds: --model requires old or new\n", stderr);
@@ -65,7 +82,7 @@ int main(int argc, char** argv) {
         } else
             input = arg;
     }
-    if ((!input && !info) || (info && (input || extract_only || output))) {
+    if ((!input && !info) || (info && (input || extract_only || output || budget_set)) || (extract_only && budget_set)) {
         usage(stderr);
         return 2;
     }
@@ -98,10 +115,18 @@ int main(int argc, char** argv) {
         return result == SNX_CTR_EXTRACT_UNSUPPORTED ? 3 : 1;
     }
     printf("Extracted %s\n", published);
+    if (extract_only) { free(published); return 0; }
+#ifdef SNX_CTR_HAVE_AOT
+    int status = snx_ctr_aot_run(argv[0], published, model, max_blocks, error, sizeof error);
     free(published);
-    if (extract_only) return 0;
+    if (status) fprintf(stderr, "scarletnx-3ds: %s\n", error);
+    return status;
+#else
+    (void)max_blocks;
+    free(published);
     /* Never silently substitute NX's A64 compiler or A32's MCJIT runner. */
-    fputs("scarletnx-3ds: extraction complete; ARM11 static compilation/execution is not implemented (stage 2b).\n",
-          stderr);
+    fputs("scarletnx-3ds: extraction complete; ARM11 static compilation/execution is not implemented in this build "
+          "(enable SNX_3DS_AOT).\n", stderr);
     return 3;
+#endif
 }

@@ -14,13 +14,20 @@ Source map: [CLAUDE.md](../CLAUDE.md).
 
 The experimental `src/3ds/` / `scarletnx-3ds` target supplies board profiles,
 decrypted CIA/NCCH/ExeFS/RomFS extraction and an independent checked page-memory
-controller, not CIA application execution. `snx_ctr_cpu` connects the page
-controller to a separate opt-in checked A32 ABI, with static native-object
-witnesses. The common A32 backend's A57/flat defaults and CPU ABI 2 are unchanged;
-ARM11 ISA and callback memory are explicit codegen options, never global 3DS
-defines. The CPU adapter links neither LLVM/MCJIT nor NX/GNU ABI runtimes.
-See [3DS port](3DS.md) for unsupported instructions and production process,
-module/discovery/dispatch and cache work still needed.
+controller. `SNX_3DS_AOT=ON` adds a native Linux small-image pipeline: fresh
+extraction -> separate offline `scarletnx-3ds-aot` LLVM compiler/host linker ->
+native ELF -> checked process/ARM/Thumb dispatch. `snx_ctr_process` maps raw
+ExHeader segments/BSS/stack/TLS; `snx_ctr_native` validates/loads module ABI 1.
+Only the offline compiler links LLVM. The runtime uses neither MCJIT nor NX/GNU
+ABI code. Existing host FS/staging/process utilities are reused.
+
+The shared A32 backend's A57/flat defaults and CPU ABI 2 are unchanged. ARM11 ISA
+and callback memory are explicit codegen options, never global 3DS defines. The
+shared backend CMake target is initialized once when several runtimes request it.
+The initial compiler exhaustively emits one-instruction blocks for every aligned
+ARM/Thumb entry within at most 4 KiB of declared text, including indirect targets;
+there is no runtime discovery or compilation. See [3DS port](3DS.md) for unsupported
+instructions, absent HLE/devices and remaining scalable discovery/cache work.
 
 The common target has no runtime-specific imports. NX and GNU ABI each link
 common and have no dependency on each other. The GNU executable target is

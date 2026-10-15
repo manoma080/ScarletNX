@@ -99,8 +99,10 @@ for both profiles at both optimization levels (55,068 comparisons). With
 `SNX_TEST_ARM_DIFF=ON` and Python `unicorn==2.1.4`, the isolated build also runs
 independent ARM11 MPCore integer comparisons and the existing A57 integer,
 VFP/NEON and Thumb regression suites. ARM11 Thumb BL halves have C golden tests,
-not a claimed independent differential oracle. Production dispatch, process
-setup, cache identity and full CIA-to-native integration remain separate work.
+not a claimed independent differential oracle. The optional small-image CTR
+pipeline now supplies process setup and native-module loading/dispatch under
+`src/3ds/`; see `docs/3DS.md`. Its initial 4 KiB exhaustive strategy, full ARM11
+semantics and cache/resume still need further work; these are not A57 defaults.
 
 ## Implemented instructions (default A57/flat configuration)
 

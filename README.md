@@ -70,10 +70,11 @@ output and combined CPU/RAM usage. See [GUI launcher](docs/GUI.md).
 
 The experimental `scarletnx-3ds` driver and **Load 3DS CIA** menu entry support
 decrypted application CIA extraction (`scarletnx-3ds -x game.cia`) and an independent
-page-based memory controller. An opt-in ARM11 integer profile and checked-memory
-adapter now have static AOT witnesses, without changing shared A57 defaults.
-**CIA-to-native execution, HLE and devices remain incomplete**; a normal CIA launch
-extracts, then stops explicitly before execution.
+page-based memory controller. `SNX_3DS_AOT=ON` additionally enables an experimental
+**extract -> offline AOT -> native run** pipeline on native 64-bit Linux, using an
+explicit ARM11/checked-memory profile without changing shared A57 defaults.
+**Text is initially limited to 4 KiB**; VFP/exclusives, cache/resume, full HLE and
+devices remain incomplete. The default build still stops after extraction.
 See the [staged 3DS port](docs/3DS.md) for limits, build instructions and remaining work.
 
 For more detailed information please see: [Build + run](./docs/BUILD.md). For the Android app (arm64 and x86_64),

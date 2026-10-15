@@ -16,6 +16,7 @@ from ctr_fixtures import TITLE, NONE, cia, ncch, put
 
 def main():
     driver = str(Path(sys.argv[1]).resolve())
+    aot_enabled = "--aot" in sys.argv[2:]
     cases = 0
     with tempfile.TemporaryDirectory(prefix='snx-ctr-extract-') as temp:
         root = Path(temp)
