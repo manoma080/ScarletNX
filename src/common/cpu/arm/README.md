@@ -79,9 +79,16 @@ which callbacks must reject on MMIO. This intentionally preflights all bytes,
 not hardware partial-transfer behavior on abort. Ordinary aligned single MMIO
 accesses remain one callback, not byte-split accesses. Callers serialize CPU,
 permissions, mappings, callbacks and device/memory writes; concurrent code
-mutation and multicore reservation semantics are not supported. Exclusives,
-acquire/release, vectors and Thumb table branches explicitly stop as unsupported
-on checked memory rather than touching a flat pointer.
+mutation and a concurrent multicore scheduler are not supported. ARM11 checked
+exclusives now use optional ABI-1 `READ|EXCLUSIVE` and `WRITE|EXCLUSIVE` RAM
+transactions. The callback owns reservation metadata without modifying CPU
+state. A serialized, saturating board-wide write/mapping epoch rejects aliases,
+other-space/kernel writes and ABA changes. Unrelated writes may cause spurious
+failure. B/H/word/double, CLREX and natural alignment have native tests. MMIO
+exclusives are rejected. Legacy callbacks reject unknown operations and fail
+closed. ABI layouts and existing operations are unchanged. A57 checked exclusives,
+acquire/release, vectors and Thumb table branches remain explicitly unsupported.
+The A57 flat path, including its existing atomic operations, is unchanged.
 
 Asset-free native tests (LLVM SDK required; no NX/SDL dependencies):
 
@@ -102,9 +109,11 @@ VFP/NEON and Thumb regression suites. ARM11 Thumb BL halves have C golden tests,
 not a claimed independent differential oracle. The optional CTR pipeline
 supplies process setup, offline conservative CFG discovery/chunking and native
 module loading/dispatch under `src/3ds/`; see `docs/3DS.md`. The pinned external
-SuperTux first-SVC boot gate additionally compares GPR/CPSR and RAM snapshots
-with ARM11 MPCore when differential tests are enabled. This is test-only, not
-an execution fallback. Broader target coverage, full ARM11 semantics and
+SuperTux bootstrap retains the first-SVC CPU-only gate and continues through
+real kernel initialization to ConnectToPort. Differential tests compare GPRs,
+CPSR and RAM at both boundaries. The second CPU reference uses a test-scripted
+HLE transcript, not independent hardware validation of kernel policy. Neither
+reference is an execution fallback. Broader target coverage, full ARM11 semantics and
 cache/resume still need work; none of these are shared A57 defaults.
 
 ## Implemented instructions (default A57/flat configuration)

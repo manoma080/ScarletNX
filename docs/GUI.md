@@ -37,8 +37,10 @@ build of a detached checkout outside CI says `detached`, and both read `unknown`
   not host executables. The driver extracts supported decrypted application CIAs.
   A native Linux build with `SNX_3DS_AOT=ON` then performs static ARM11 integer
   compilation/execution; the default build reports missing AOT support. Larger
-  images use bounded conservative discovery (16 MiB text cap). SuperTux reaches
-  its first syscall, not gameplay; HLE/devices remain incomplete. Install the
+  images use bounded conservative discovery (16 MiB text cap). SuperTux now
+  connects/registers `srv:`, then waits for absent `APT:S`, before main,
+  graphics or audio. No service/session success is invented to bypass that wait.
+  Full HLE/devices remain incomplete. Install the
   adjacent `scarletnx-3ds-aot` compiler too. Existing extraction directories are
   refused rather than treated as cache hits. See [3DS port](3DS.md) for limits.
 - **Setup device keys**, immediately after the three load entries, prompts you to

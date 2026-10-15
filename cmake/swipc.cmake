@@ -43,7 +43,11 @@ endif()
 # that compiles a service's C file generates that service's files for itself the same way. swipc only rewrites an
 # output that changed, which the Ninja generators see (restat)
 function(snx_swipc target)
-    cmake_parse_arguments(PARSE_ARGV 1 arg "" "ROOT" "FILES")
+    cmake_parse_arguments(PARSE_ARGV 1 arg "CTR" "ROOT" "FILES")
+    set(mode)
+    if(arg_CTR)
+        set(mode --ctr)
+    endif()
     set(out "${CMAKE_CURRENT_BINARY_DIR}/${target}-swipc")
     set(inputs)
     set(outputs)
@@ -57,7 +61,7 @@ function(snx_swipc target)
     list(REMOVE_DUPLICATES dirs)
     add_custom_command(OUTPUT ${outputs}
         COMMAND "${CMAKE_COMMAND}" -E make_directory ${dirs}
-        COMMAND snx-swipc --root "${arg_ROOT}" --out "${out}" ${arg_FILES}
+        COMMAND snx-swipc ${mode} --root "${arg_ROOT}" --out "${out}" ${arg_FILES}
         DEPENDS snx-swipc ${inputs}
         COMMENT "Generating the IPC dispatchers of ${target}" VERBATIM)
     # listed as sources so they are generated before anything of the target compiles

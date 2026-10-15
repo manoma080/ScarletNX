@@ -3,9 +3,10 @@
 # Copyright 2026 the ScarletNX contributors
 """Checked A32 integer AOT vs Unicorn's ARM11 MPCore model, at O0/O2.
 
-An independent ISA oracle, unlike arm_checked_matrix.py. Exclusives are not
-implemented on the checked backend and are covered by explicit unsupported
-witnesses instead. Thumb legacy BL halves have separate C golden witnesses.
+An independent ISA oracle, unlike arm_checked_matrix.py. Includes serialized
+ARMv6K exclusive sequences. A separate C gate tests the real CTR bus against
+aliases, external writes, ABA, permissions and mapping changes. Thumb legacy
+BL halves have separate C golden witnesses.
 """
 
 import argparse
@@ -40,8 +41,6 @@ def main():
             functions = M.compile_blocks(args, root, 'arm11', 'checked', opt)
             total = invalid = 0
             for index, group in A.CASES:
-                if group == 'atomic':
-                    continue
                 words = A.PROGRAMS[index]
                 for seed in range(32):
                     cpu, memory = A.state(words, seed, group)
@@ -56,18 +55,27 @@ def main():
                     except U.UcError as exc:
                         error = exc
                     faults = []
+                    epoch, reservation = [1], [0, 0, 0]
 
                     @M.Access
                     def access(context, operation, address, size, data):
-                        if operation not in (1, 2, 3, 0x101, 0x102) or not 1 <= size <= 64:
+                        if operation not in (1, 2, 3, 0x101, 0x102, 0x201, 0x202) or not 1 <= size <= 64:
                             faults.append((operation, size))
                             return 1
                         if address + size > A.SIZE:
                             return 1
+                        if operation == 0x202:
+                            valid = reservation == [epoch[0], address, size]
+                            reservation[:] = [0, 0, 0]
+                            if not valid:
+                                return 2
                         if operation & 255 == 2:
                             C.memmove(C.addressof(memory) + address, data, size)
+                            epoch[0] += 1
                         else:
                             C.memmove(data, C.addressof(memory) + address, size)
+                            if operation == 0x201:
+                                reservation[:] = [epoch[0], address, size]
                         return 0
 
                     state = M.Checked()

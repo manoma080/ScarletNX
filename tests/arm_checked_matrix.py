@@ -60,7 +60,8 @@ def main():
     parser.add_argument('--cc', required=True)
     args = parser.parse_args()
     A.catalogue()
-    # Exclusives intentionally stop as unsupported on the checked backend.
+    # A57 checked exclusives remain unsupported. ARM11 reservations have an
+    # independent ISA oracle and real CTR bus witnesses, not a flat-value oracle.
     cases = [(i, group) for i, group in A.CASES if group != 'atomic']
     total = 0
     with tempfile.TemporaryDirectory(prefix='snx-checked-matrix-') as tmp:

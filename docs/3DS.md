@@ -2,20 +2,22 @@
 <!-- Copyright 2026 the ScarletNX contributors -->
 # Nintendo 3DS port
 
-## Status: stage 1 + stage 2a + stages 2b1–2b3
+## Status: stage 1 + stage 2a + stages 2b1–2b4 + initial 3a
 
 `scarletnx-3ds` extracts **decrypted application CIAs**. With `SNX_3DS_AOT=ON`,
 it performs **extract -> offline static AOT -> native module -> checked ARM/Thumb
 execution**. Both asset-free witnesses and the supplied SuperTux CIA's native
-startup gate pass. SuperTux stops at **CreateAddressArbiter (SVC 0x21), before
-`main`**; it is **not playable**, and there is no graphics/audio yet. See the
+startup gate pass. SuperTux now creates its address arbiter, allocates checked
+heap/linear memory, executes startup locks, connects/registers `srv:`, then
+**blocks awaiting absent `APT:S` (SVC 0x32), before `main`**. It is **not playable**, and there is no graphics/audio yet. See the
 [SuperTux integration target](3DS-SUPERTUX.md) for the pinned input and next blockers.
 
 Text is bounded at **16 MiB**, using conservative static CFG discovery for larger
 images. This is not complete indirect-target coverage or a general 3DS runtime.
-VFP/exclusives remain unsupported; only SVC 0x03 (ExitProcess) is handled. Stage 2
-still needs broader discovery/ISA validation and cache/resume. Stages 3–6 remain
-pending. No firmware, keys, title assets or Azahar CPU engine are included.
+VFP remains unsupported. Stage 2b4 adds serialized ARM11 checked exclusives and
+a bounded kernel-bootstrap subset. Stage 2 still needs broader discovery/ISA
+validation and cache/resume. Initial stage 3a adds a SwIPC-derived CTR generator,
+checked transport and bounded service sessions. Full HLE/IPC and stages 4–6 remain pending. No firmware, keys, title assets or Azahar CPU engine are included.
 
 Implemented:
 
@@ -49,7 +51,7 @@ Implemented:
   linked into their executables.
 - Stage 2b2: raw ExHeader/expanded `.code` revalidation, RX/R/RW process mappings,
   zeroed page-appended BSS, guarded stack and one private initial TLS page.
-  `TPIDRURO` points at this page; this is not a thread scheduler or kernel.
+  `TPIDRURO` points at this page. There is no thread scheduler.
 - Optional `scarletnx-3ds-aot`: separate offline LLVM compiler and native host
   linker, private staging/publication, versioned module ABI and exact image
   identity. Images up to 4096 bytes retain exhaustive one-instruction ARM/Thumb
@@ -66,6 +68,53 @@ Implemented:
   and image identity. It dispatches on PC + CPSR.T, enforces execution permission
   and a block budget, and reports missing entries, faults and unsupported SVCs.
   The runtime and generated modules do **not** link LLVM or an interpreter/JIT.
+
+### Kernel-bootstrap subset (2b4)
+
+- Process-owned, reference-counted typed objects and 256 generation-tagged handles.
+  Process/main-thread pseudo-handles identify real root objects. Duplicates retain
+  identity, close releases references, stale handles are rejected until finite
+  generation rollover, and table/object exhaustion returns errors without leaks.
+- SVC `0x21` creates real address-arbiter objects. `0x22` implements signal with no
+  waiting peers, signed predicates, conditional decrement and immediate timeout.
+  A required wait stops as **BLOCKED**, not successful completion. Dispatch cannot
+  resume past that pending call. Scheduling, timed wakeups and other threads are
+  not implemented yet.
+- SVC `0x23` closes handles and `0x27` duplicates them. SVC `0x2a`, type 0, reports
+  actual allocated FCRAM pages for the modeled memory regions. Other queries
+  return an explicit unsupported result. ExitProcess (`0x03`) remains handled.
+- Read-only configuration page at `0x1ff80000`, backed by board AXI WRAM rather
+  than charged to application FCRAM. The limited kernel personality reports
+  version 2.58 and memory mode 0 (Old, 64 MiB application) or 6 (New, 124 MiB).
+  Other ExHeader memory modes, resource-limit capabilities and kernel/firmware
+  configuration fields are not fully modeled.
+- ControlMemory (`0x01`) validates page ranges/permissions and supports commit,
+  free and protect of owned heap/linear allocations. Normal heap uses explicit
+  VAs in `0x08000000..0x10000000` and may span discontiguous physical holes.
+  Linear memory is physically contiguous with `PA = VA - 0x14000000 + 0x20000000`.
+  Recycled pages are zeroed. Requests are preflighted and failed publication is
+  rolled back. Aliases, region flags and executable heap permissions are refused.
+  This is not full ControlMemory behavior for static image/shared mappings.
+- ARM11 checked LDREX/STREX B/H/word/double and CLREX use optional checked-ABI-1
+  reservation transactions. The bus owns a saturating board-wide write/mapping
+  epoch, so kernel writes, aliases and other address spaces invalidate reservations
+  even after an ABA write. Unrelated writes may fail exclusives conservatively.
+  MMIO is rejected. All execution and mutations remain serialized, with no host
+  concurrent/multicore scheduler claim. A57 defaults and both CPU ABIs are unchanged.
+
+### Initial CTR IPC/services (3a)
+
+SVC `0x2d` connects to the actual `srv:` endpoint; `0x32` dispatches checked
+TLS command words; `0x35` identifies the actual process root. A separate SwIPC
+`--ctr` mode emits typed handlers without HIPC/CMIF or successful default stubs.
+`srv:` supports client registration and service lookup with real session
+ownership. FS supports PID/SDK session initialization, **not archive/file IO**.
+Unknown commands stop; absent-service waits become BLOCKED without a fake session
+or response and cannot resume. SuperTux currently waits for **APT:S**.
+
+See [CTR IPC](CTR-IPC.md) for the strict generator subset, descriptor/permission
+checks, quotas, malformed-request policy, tests and unimplemented operations.
+Unknown SVCs still stop explicitly. No service/device success is fabricated.
 
 ```sh
 build/3ds/scarletnx-3ds -x --output work/my-title game.cia
@@ -103,7 +152,7 @@ status**. Successful handling of SVC 0x03 returns host status zero. Exit codes:
 - 1: malformed data, IO/limit/existing-output failure, ABI mismatch or guest fault.
 - 2: invalid CLI arguments or missing/non-CIA file path.
 - 3: unsupported format/ISA-backend/SVC, disabled/missing compiler, text-size cap,
-  missing static target or exhausted execution budget.
+  missing static target, exhausted execution budget or a pending unsupported wait.
 
 ### Current limits and trust
 
@@ -189,8 +238,14 @@ Use both `SNX_3DS_AOT=ON` and `SNX_TEST_ARM_AOT=ON` for pipeline plus CPU tests.
 The bounded CFG unit test needs no LLVM. To run the optional external SuperTux
 bootstrap gate, set `SNX_TEST_3DS_SUPERTUX=/absolute/path/to/Supertux.cia`.
 `SNX_TEST_ARM_DIFF=ON` additionally compares its first-SVC GPR/CPSR and complete
-data/stack/TLS snapshots against pinned Unicorn ARM11 MPCore (test-only oracle,
-never a runtime engine). No sample binaries are downloaded or distributed.
+data/stack/TLS snapshots against pinned Unicorn ARM11 MPCore. A second CPU
+comparison reaches ConnectToPort with test-scripted HLE effects and complete
+heap/linear snapshots. The second comparison validates CPU behavior under that
+transcript, not hardware kernel semantics. A third comparison continues through
+scripted `srv:` connection/registration effects to the APT:S wait, again matching
+all GPRs/CPSR and complete RAM snapshots without independently proving IPC policy.
+Unicorn is never a runtime engine.
+No sample binaries are downloaded or distributed.
 
 ## Source provenance and licensing
 
@@ -212,6 +267,15 @@ and Unicorn 2.1.4's ARM11 MPCore model are test references, not runtime engines.
 Stage 2b2 process mappings/BSS policy refer to Azahar `src/core/loader/ncch.cpp`
 and kernel process layout at the same revision; the new image/module/compiler/
 dispatch implementation is project C code, not an adapted Azahar CPU engine.
+Stage 2b4 references GPL-2.0-or-later kernel `svc.cpp`, `errors.h`,
+`handle_table.cpp`, `address_arbiter.cpp`, `config_mem.*`, `memory.cpp` and
+`process.cpp` at the same revision for SVC register/result semantics, object
+lifetimes, configuration offsets and memory-region facts. The new C object,
+allocator and reservation implementation does not import an Azahar CPU engine.
+Stage 3a references GPL-2.0-or-later `core/hle/ipc.h`, `kernel/hle_ipc.cpp`,
+`kernel/svc.cpp`, `service/sm/{srv.cpp,sm.h}` and `service/fs/fs_user.cpp` at that
+revision for wire/result/initialization facts. Its new C transport/services and
+separate SwIPC emitter are project code; see [CTR IPC](CTR-IPC.md).
 Azahar is not a build dependency.
 Azahar's root license is GPLv3; individual files carry GPLv2-or-later or
 GPLv3-or-later notices. Future adaptations must retain each source's notices
@@ -234,9 +298,11 @@ Remaining requirements beyond the initial native bootstrap pipeline:
    validation. Current ordinary unaligned transfers model unaligned support
    enabled/alignment checking disabled, not every ARM11 CP15 configuration.
 2. The separate checked-memory ABI and CTR adapter are implemented for integer
-   transfers. Complete architectural reservation monitors/exclusives: these
-   currently stop as unsupported, as do VFP/vector transfers and checked Thumb
-   table branches. Do not pass an A64 `CPU*` or an NX module to an A32 block.
+   transfers. ARM11 checked exclusives now have serialized bus-owned reservations,
+   including alias/ABA invalidation. Concurrent scheduling and broader monitor
+   validation remain pending. VFP/vector transfers, A57 checked exclusives and
+   checked Thumb table branches remain unsupported. Never pass an A64 `CPU*` or
+   an NX module to an A32 block.
 3. Module ABI 1 supports exhaustive tiny images and bounded conservative CFG
    discovery/chunking for larger images. Its full-geometry pointer tables permit
    NULL slots; the ABI and CPU layouts are unchanged. Improve computed-target
@@ -274,8 +340,12 @@ Stage 2b2 adds module ABI/loading, bounded exhaustive ARM/Thumb static dispatch,
 ExHeader process/stack/TLS setup and the asset-free extract/AOT/run witness.
 Stage 2b3 removes the tiny-image restriction with bounded chunked static CFG
 compilation and passes the external SuperTux first-SVC native bootstrap gate.
-**Stage 2 is not complete**: broader discovery/ISA coverage, full VFP/exclusives,
-validated resume/cache and wider runtime validation remain pending.
+Stage 2b4 adds kernel-bootstrap objects, configuration, checked allocations and
+serialized ARM11 exclusives. That checkpoint reached ConnectToPort before `main`;
+initial 3a now passes `srv:` registration and blocks awaiting absent APT:S.
+**Stage 2 is not complete**: broader discovery/ISA coverage, full VFP, concurrent
+reservation/scheduling semantics, validated resume/cache and wider runtime
+validation remain pending.
 
 Reference Azahar `src/core/file_sys/{cia_container,ticket,title_metadata,
 ncch_container,romfs_reader}.*`, `src/core/hle/service/am/am.cpp` (installation),
@@ -309,9 +379,14 @@ Reference Azahar kernel/SVC/IPC code and `src/core/hle/service/`. Use
 wire adapter**: 3DS TLS command words, normal/translation counts, handles,
 static/mapped buffers and response layout are not Switch HIPC/CMIF.
 
+Initial 3a implements a strict generated subset, real session lifetimes, client
+registration/lookup and FS caller/SDK association. It does not implement FS
+resources or APT. The supplied title actually requests `APT:S` first; the full
+stage and OS/filesystem execution witness below remain unfinished.
+
 - Threads, handles, events, waits, scheduling, SVCs, TLS, shared memory and result
   codes; checked guest buffers and handle lifetimes at every IPC boundary.
-- Start with `srv:`, `fs:USER`, `APT:U`, configuration/time and resource services;
+- Start with `srv:`, `fs:USER`, `APT:S`/`APT:U`, configuration/time and resource services;
   implement shared-memory/event plumbing needed by later DSP/GSP/HID stages.
 - Gate: generated dispatch against hand-encoded requests, malformed descriptors,
   unknown commands, handle transfer/close, IPC-buffer bounds, blocking/wakeup,

@@ -2,6 +2,10 @@
 <!-- Copyright 2026 the ScarletNX contributors -->
 # IPC interfaces
 
+This page describes **NX HIPC/CMIF**. The independent `swipc --ctr` profile and
+3DS transport are documented in [CTR IPC](CTR-IPC.md); they do not use the NX
+wire layout or the successful stand-in described below.
+
 The services the runtime emulates answer the game through IPC (`hle/kernel/ipc.c`). Each service interface is
 declared once, in a `.swipc` file beside the service's C file, and `tools/swipc/swipc.c` generates the code that turns
 a request into a call of a typed handler and the handler's outputs into the reply. The services' C files hold only

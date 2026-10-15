@@ -9,8 +9,12 @@
    This adapter does NOT discover/load native blocks or implement an OS. */
 typedef struct {
     SnxArmCheckedCPU state;
+    SnxCtrAddressSpace* space;
+    uint64_t reservation_epoch;
+    uint32_t reservation_address, reservation_size;
 } SnxCtrCpu;
 /* Fresh USR state. Caller owns process mappings and executable entry validation.
-   Space must outlive the CPU; all accesses/mapping changes are serialized. */
+   Space must outlive the CPU; all accesses/mapping changes are serialized.
+   Do not copy/move initialized CPUs: the checked context refers to its owner. */
 bool snx_ctr_cpu_init(SnxCtrCpu* cpu, SnxCtrAddressSpace* space, uint32_t pc, uint32_t sp, bool thumb);
 #endif

@@ -17,6 +17,14 @@
     F(movw11, 0, 1, 1, 0x1000, 0xe3010234)                                                                             \
     F(movw57, 0, 0, 1, 0x1000, 0xe3010234)                                                                             \
     F(exclusive, 0, 1, 1, 0x1000, 0xe1902f9f)                                                                          \
+    F(exclusive_a57, 0, 0, 1, 0x1000, 0xe1902f9f)                                                                      \
+    F(exclusive_pair, 0, 1, 1, 0x1000, 0xe1902f9f, 0xe1803f91)                                                         \
+    F(exclusive_store, 0, 1, 1, 0x1004, 0xe1803f91)                                                                    \
+    F(exclusive_byte, 0, 1, 1, 0x1000, 0xe1d02f9f, 0xe1c03f91)                                                         \
+    F(exclusive_half, 0, 1, 1, 0x1000, 0xe1f02f9f, 0xe1e03f91)                                                         \
+    F(exclusive_double, 0, 1, 1, 0x1000, 0xe1b02f9f, 0xe2822001, 0xe1a04f92)                                           \
+    F(exclusive_clear, 0, 1, 1, 0x1000, 0xe1902f9f, 0xf57ff01f, 0xe1803f91)                                            \
+    F(exclusive_local_store, 0, 1, 1, 0x1000, 0xe1902f9f, 0xe5801000, 0xe1803f91)                                      \
     F(vfp, 0, 1, 1, 0x1000, 0xee300a01)                                                                                \
     F(neon, 0, 1, 1, 0x1000, 0xf2010802)                                                                               \
     F(condstore, 0, 1, 1, 0x1000, 0x05801000)                                                                          \

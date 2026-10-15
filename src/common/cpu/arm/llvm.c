@@ -246,13 +246,17 @@ static void bounds(ArmIR* a, LLVMValueRef addr, unsigned bytes, unsigned alignme
 }
 /* Checked callbacks never see host guest pointers, only a bounded transaction
    buffer. Their faults precede register/base writeback, even for LDM/STM. */
-static void bus_access(ArmIR* a, unsigned operation, LLVMValueRef addr, unsigned bytes, LLVMValueRef buffer) {
+static LLVMValueRef bus_operation(ArmIR* a, unsigned operation, LLVMValueRef addr, unsigned bytes,
+                                  LLVMValueRef buffer) {
     LLVMTypeRef types[] = {a->ptr, a->i32, a->i32, a->i32, a->ptr};
     LLVMTypeRef ft = LLVMFunctionType(a->i32, types, 5, 0);
     LLVMValueRef fn = get(a, offsetof(SnxArmCheckedCPU, access), a->ptr);
     LLVMValueRef args[] = {get(a, offsetof(SnxArmCheckedCPU, context), a->ptr), c32(a, operation), addr, c32(a, bytes),
                            buffer};
-    LLVMValueRef result = LLVMBuildCall2(a->b, ft, fn, args, 5, "bus.status");
+    return LLVMBuildCall2(a->b, ft, fn, args, 5, "bus.status");
+}
+static void bus_access(ArmIR* a, unsigned operation, LLVMValueRef addr, unsigned bytes, LLVMValueRef buffer) {
+    LLVMValueRef result = bus_operation(a, operation, addr, bytes, buffer);
     require(a, cmp(a, LLVMIntEQ, result, c32(a, 0)),
             operation == SNX_ARM_ACCESS_FETCH ? SNX_ARM_PREFETCH_ABORT : SNX_ARM_DATA_ABORT, addr);
 }
@@ -405,6 +409,60 @@ static LLVMValueRef host_order(ArmIR* a, LLVMValueRef v, unsigned bytes) {
     (void)bytes;
 #endif
     return v;
+}
+/* ABI-1 optional RAM reservation operations. The bus owns the write epoch,
+   so aliases, DMA/kernel writes and remaps cannot pass an ABA value check.
+   CPU-local address/size/valid are additional guards, never the global monitor.
+   Only the explicit ARM11+checked path uses this extension. */
+static void checked_exclusive(ArmIR* a) {
+    uint32_t w = a->word;
+    unsigned op = (w >> 20) & 7, n = (w >> 16) & 15, d = (w >> 12) & 15, t = w & 15;
+    static const unsigned widths[] = {4, 8, 1, 2};
+    unsigned bytes = widths[op >> 1];
+    LLVMTypeRef type = LLVMIntTypeInContext(a->ctx, bytes * 8);
+    LLVMValueRef addr = reg(a, n), value, buffer = LLVMBuildAlloca(a->b, type, "exclusive.bytes");
+    require(a, cmp(a, LLVMIntEQ, band(a, addr, c32(a, bytes - 1)), c32(a, 0)), SNX_ARM_ALIGNMENT, addr);
+    if (op & 1) {
+        bus_access(a, SNX_ARM_ACCESS_READ | SNX_ARM_ACCESS_EXCLUSIVE, addr, bytes, buffer);
+        value = host_order(a, LLVMBuildLoad2(a->b, type, buffer, ""), bytes);
+        if (bytes < 8) value = LLVMBuildZExt(a->b, value, a->i64, "");
+        put(a, offsetof(SnxArmCPU, exclusive_value), value);
+        PUT(a, exclusive_address, addr);
+        PUT(a, exclusive_size, c32(a, bytes));
+        PUT(a, exclusive_valid, c32(a, 1));
+        setreg(a, d, LLVMBuildTrunc(a->b, value, a->i32, ""));
+        if (bytes == 8) setreg(a, d + 1, LLVMBuildTrunc(a->b, LLVMBuildLShr(a->b, value, c64(a, 32), ""), a->i32, ""));
+    } else {
+        LLVMBasicBlockRef attempt = block(a, "exclusive.try"), fail = block(a, "exclusive.fail"),
+                          join = block(a, "exclusive.end");
+        LLVMValueRef valid = cmp(a, LLVMIntNE, GET(a, exclusive_valid), c32(a, 0));
+        valid = band(a, valid, cmp(a, LLVMIntEQ, GET(a, exclusive_address), addr));
+        valid = band(a, valid, cmp(a, LLVMIntEQ, GET(a, exclusive_size), c32(a, bytes)));
+        PUT(a, exclusive_valid, c32(a, 0));
+        LLVMBuildCondBr(a->b, valid, attempt, fail);
+        LLVMPositionBuilderAtEnd(a->b, attempt);
+        value = reg(a, t);
+        if (bytes == 8)
+            value = bor(a, z64(a, value), LLVMBuildShl(a->b, z64(a, reg(a, t + 1)), c64(a, 32), ""));
+        else if (bytes < 4)
+            value = LLVMBuildTrunc(a->b, value, type, "");
+        LLVMBuildStore(a->b, host_order(a, value, bytes), buffer);
+        LLVMValueRef status = bus_operation(a, SNX_ARM_ACCESS_WRITE | SNX_ARM_ACCESS_EXCLUSIVE, addr, bytes, buffer);
+        require(
+            a,
+            bor(a, cmp(a, LLVMIntEQ, status, c32(a, 0)), cmp(a, LLVMIntEQ, status, c32(a, SNX_ARM_EXCLUSIVE_FAILED))),
+            SNX_ARM_DATA_ABORT, addr);
+        LLVMValueRef result = z32(a, cmp(a, LLVMIntNE, status, c32(a, 0)));
+        LLVMBasicBlockRef from[] = {LLVMGetInsertBlock(a->b), fail};
+        LLVMValueRef incoming[] = {result, c32(a, 1)};
+        LLVMBuildBr(a->b, join);
+        LLVMPositionBuilderAtEnd(a->b, fail);
+        LLVMBuildBr(a->b, join);
+        LLVMPositionBuilderAtEnd(a->b, join);
+        result = LLVMBuildPhi(a->b, a->i32, "");
+        LLVMAddIncoming(result, incoming, from, 2);
+        setreg(a, d, result);
+    }
 }
 static void exclusive(ArmIR* a) {
     uint32_t w = a->word;
@@ -585,8 +643,8 @@ static int instruction(ArmIR* a, SnxA32Kind kind) {
     uint32_t w = a->word;
     unsigned d = (w >> 12) & 15;
     if ((a->profile == SNX_ARM_PROFILE_ARM11 && kind == SNX_A32_VECTOR) ||
-        (a->memory == SNX_ARM_MEMORY_CHECKED &&
-         (kind == SNX_A32_VECTOR || kind == SNX_A32_EXCLUSIVE || kind == SNX_A32_ACQUIRE_RELEASE))) {
+        (a->memory == SNX_ARM_MEMORY_CHECKED && (kind == SNX_A32_VECTOR || kind == SNX_A32_ACQUIRE_RELEASE ||
+                                                 (kind == SNX_A32_EXCLUSIVE && a->profile != SNX_ARM_PROFILE_ARM11)))) {
         trap(a, SNX_ARM_BACKEND_UNSUPPORTED, c32(a, w));
         return 1;
     }
@@ -618,7 +676,12 @@ static int instruction(ArmIR* a, SnxA32Kind kind) {
         case SNX_A32_MUL:
         case SNX_A32_MULL:
         case SNX_A32_MLS: multiply(a, kind); break;
-        case SNX_A32_EXCLUSIVE: exclusive(a); break;
+        case SNX_A32_EXCLUSIVE:
+            if (a->memory == SNX_ARM_MEMORY_CHECKED)
+                checked_exclusive(a);
+            else
+                exclusive(a);
+            break;
         case SNX_A32_ACQUIRE_RELEASE: acquire_release(a); break;
         case SNX_A32_CLREX: PUT(a, exclusive_valid, c32(a, 0)); break;
         case SNX_A32_BARRIER:

@@ -37,6 +37,10 @@ SnxCtrMemResult snx_ctr_map(SnxCtrAddressSpace* space, uint32_t va, uint32_t pa,
 SnxCtrMemResult snx_ctr_protect(SnxCtrAddressSpace* space, uint32_t va, uint32_t size, unsigned permissions);
 SnxCtrMemResult snx_ctr_unmap(SnxCtrAddressSpace* space, uint32_t va, uint32_t size);
 SnxCtrMemResult snx_ctr_query(const SnxCtrAddressSpace* space, uint32_t va, uint32_t* pa, unsigned* permissions);
+/* Serialized board-wide reservation generation, not a RAM value comparison.
+   Every successful write or mapping/protection change advances it. Saturates
+   at UINT64_MAX, after which exclusive stores must fail conservatively. */
+uint64_t snx_ctr_memory_epoch(const SnxCtrAddressSpace* space);
 /* RAM transfers may be unaligned and span pages, after preflighting the ENTIRE
    range. MMIO transfers may not span pages or mix with RAM. No flat host pointer
    is exported. The CPU adapter owns instruction-specific alignment rules. */
