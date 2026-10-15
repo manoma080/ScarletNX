@@ -191,14 +191,15 @@ int main(void) {
         lookup(p, srv, 0);
         assert(word(p, 1) == 0xd0401834 && objects(p) == 35);
         for (unsigned i = 0; i < 32; ++i) close_handle(p, sessions[i]);
-        uint32_t absent[] = {0x00050100, 0x3a545041, 0x53, 5, 1}; /* APT:S, non-waiting */
+        uint32_t absent[] = {0x00050100, 0x5353494d, 0x474e49, 7, 1}; /* MISSING, non-waiting */
         request(p, absent, 5);
         sync(p, srv, SNX_CTR_SVC_RETURN, 0);
         assert(word(p, 0) == 0x00050040 && word(p, 1) == 0xd0406401 && !snx_ctr_kernel_blocked(p));
         absent[4] = 0;
         request(p, absent, 5);
         sync(p, srv, SNX_CTR_SVC_BLOCKED, 0);
-        assert(word(p, 0) == absent[0] && !strcmp(p->waiting_service, "APT:S") && snx_ctr_kernel_blocked(p));
+        assert(word(p, 0) == absent[0] && !strcmp(snx_ctr_thread(p)->waiting_service, "MISSING") &&
+               snx_ctr_kernel_blocked(p));
         uint64_t executed = 99;
         SnxCtrModule empty = {0};
         assert(snx_ctr_dispatch(&empty, p, 1, &executed) == SNX_CTR_RUN_BLOCKED && !executed);

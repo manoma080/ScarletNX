@@ -5,7 +5,10 @@
 #include "ctr_ipc.h"
 #include "runtime/internal.h"
 #include "services/srv.swipc.h"
-#include "services/fs.swipc.h"
+#include "services/fs.h"
+#include "services/apt.h"
+#include "services/ptm.swipc.h"
+#include "services/hid.swipc.h"
 #include <string.h>
 
 static uint32_t load32(const unsigned char* b) {
@@ -45,22 +48,23 @@ void snx_ctr_ipc_error_reply(SnxCtrIpc* c, uint32_t result) {
 void snx_ctr_ipc_drop_handle(SnxCtrIpc* c, uint32_t handle) {
     if (handle) (void)snx_ctr_handle_close(c->process, handle);
 }
-void snx_ctr_ipc_output_handle(SnxCtrIpc* c, uint32_t first, uint32_t descriptor, uint32_t handle) {
-    if (first < 2 || first >= SNX_CTR_IPC_WORDS - 1 || (descriptor != 0 && descriptor != 0x10) || !handle ||
-        handle == CTR_PROCESS_HANDLE || handle == CTR_THREAD_HANDLE || !snx_ctr_handle_object(c->process, handle)) {
+void snx_ctr_ipc_output_handle(SnxCtrIpc* c, uint32_t word, uint32_t handle) {
+    if (word < 3 || word >= SNX_CTR_IPC_WORDS || !handle || handle == CTR_PROCESS_HANDLE ||
+        handle == CTR_THREAD_HANDLE || !snx_ctr_handle_object(c->process, handle)) {
         c->state = SNX_CTR_IPC_FAULT;
         return;
     }
-    c->out[first] = descriptor;
-    c->out[first + 1] = handle;
+    c->out[word] = handle;
 }
 uint32_t snx_ctr_session_create(SnxCtrProcess* p, uint32_t service, uint32_t* out) {
     *out = 0;
-    if (service != SNX_CTR_SERVICE_SRV && service != SNX_CTR_SERVICE_FS) return 0xe0e01bf4u;
+    if (service != SNX_CTR_SERVICE_SRV && service != SNX_CTR_SERVICE_FS && service != SNX_CTR_SERVICE_APT &&
+        service != SNX_CTR_SERVICE_PTM && service != SNX_CTR_SERVICE_HID)
+        return 0xe0e01bf4u;
     unsigned count = 0;
     for (unsigned i = 1; i < CTR_OBJECTS; ++i)
         if (p->objects[i].type == CTR_OBJ_SESSION && p->objects[i].data.session.service == service) ++count;
-    if (count >= (service == SNX_CTR_SERVICE_SRV ? 64u : 32u)) return 0xd0401834u;
+    if (count >= (service == SNX_CTR_SERVICE_SRV ? 64u : service == SNX_CTR_SERVICE_FS ? 32u : 2u)) return 0xd0401834u;
     uint32_t result = snx_ctr_object_create(p, CTR_OBJ_SESSION, out);
     if (!result) p->objects[snx_ctr_handle_object(p, *out)].data.session.service = service;
     return result;
@@ -89,7 +93,13 @@ static unsigned translation(const SnxCtrIpc* c, uint32_t normal, uint32_t transl
             unsupported = true;
         } else if ((d & 1023) == 2 || (d & 15) == 4 || (d & 15) == 6) {
             payload = 1;
-            unsupported = true;
+            /* Only the explicitly checked APT utility / absent-SD commands
+               accept incoming static buffers. Handlers preflight ID, length
+               and whole RAM ranges. Other static/PXI/mapped transfers stop. */
+            uint32_t service = c->process->objects[c->object].data.session.service;
+            bool supported = (service == SNX_CTR_SERVICE_APT && c->in[0] == 0x004b00c2 && (d & 0x3fff) == 0x402) ||
+                             (service == SNX_CTR_SERVICE_FS && c->in[0] == 0x080c00c2 && d == 0x4002);
+            unsupported = unsupported || !supported;
         } else if (d == 0x20) {
             payload = 1;
         } else if (!(d & 0x03ffffffu) || (d & 0x03ffffffu) == 0x10) {
@@ -140,6 +150,9 @@ SnxCtrSvcResult snx_ctr_ipc_send(SnxCtrProcess* p, uint32_t handle, uint32_t* re
     switch (p->last_ipc_service) {
         case SNX_CTR_SERVICE_SRV: snx_ctr_srv_dispatch(&c); break;
         case SNX_CTR_SERVICE_FS: snx_ctr_fs_dispatch(&c); break;
+        case SNX_CTR_SERVICE_APT: snx_ctr_apt_dispatch(&c); break;
+        case SNX_CTR_SERVICE_PTM: snx_ctr_ptm_dispatch(&c); break;
+        case SNX_CTR_SERVICE_HID: snx_ctr_hid_dispatch(&c); break;
         default: return SNX_CTR_SVC_UNSUPPORTED;
     }
     if (c.state == SNX_CTR_IPC_UNSUPPORTED) return SNX_CTR_SVC_UNSUPPORTED;

@@ -20,12 +20,15 @@ static uint32_t snx_ctr_srv_GetServiceHandle(SnxCtrIpc* c, const uint8_t* name, 
         if (name[i] < 0x21 || name[i] > 0x7e) return 0xd8e06406u;
     }
     if (length == 7 && !memcmp(name, "fs:USER", 7)) return snx_ctr_session_create(p, SNX_CTR_SERVICE_FS, session);
+    if (length == 5 && !memcmp(name, "APT:S", 5)) return snx_ctr_session_create(p, SNX_CTR_SERVICE_APT, session);
+    if (length == 8 && !memcmp(name, "ptm:sysm", 8)) return snx_ctr_session_create(p, SNX_CTR_SERVICE_PTM, session);
+    if (length == 8 && !memcmp(name, "hid:USER", 8)) return snx_ctr_session_create(p, SNX_CTR_SERVICE_HID, session);
     if (flags & 1) return 0xd0406401u;
     /* This endpoint is genuinely absent. Waiting for its registration cannot
        complete in the current single-process/no-scheduler kernel. */
-    p->waiting_object = c->object;
-    memcpy(p->waiting_service, name, length);
-    p->waiting_service[length] = 0;
+    snx_ctr_thread_block(p, c->object, 0);
+    memcpy(snx_ctr_thread(p)->waiting_service, name, length);
+    snx_ctr_thread(p)->waiting_service[length] = 0;
     c->state = SNX_CTR_IPC_BLOCKED;
     return 0;
 }

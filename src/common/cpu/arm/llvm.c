@@ -610,6 +610,21 @@ static void miscellaneous(ArmIR* a, SnxA32Kind kind) {
         r = LLVMBuildTrunc(a->b, ror(a, x, ((w >> 10) & 3) * 8), type, "");
         r = w & (1u << 22) ? z32(a, r) : LLVMBuildSExt(a->b, r, a->i32, "");
         if (n != 15) r = add(a, r, reg(a, n));
+    } else if (kind == SNX_A32_UADD8 || kind == SNX_A32_SEL) {
+        LLVMValueRef y = reg(a, n), ge = c32(a, 0);
+        r = c32(a, 0);
+        for (unsigned i = 0; i < 4; ++i) {
+            LLVMValueRef left = band(a, lsr(a, y, i * 8), c32(a, 255));
+            LLVMValueRef right = band(a, lsr(a, x, i * 8), c32(a, 255)), lane;
+            if (kind == SNX_A32_UADD8) {
+                LLVMValueRef sum = add(a, left, right);
+                lane = band(a, sum, c32(a, 255));
+                ge = bor(a, ge, shl(a, lsr(a, sum, 8), 16 + i));
+            } else
+                lane = choose(a, cmp(a, LLVMIntNE, flag(a, 16 + i), c32(a, 0)), left, right);
+            r = bor(a, r, shl(a, lane, i * 8));
+        }
+        if (kind == SNX_A32_UADD8) PUT(a, cpsr, bor(a, band(a, GET(a, cpsr), c32(a, ~0x000f0000u)), ge));
     } else if (kind == SNX_A32_BITFIELD) {
         unsigned lsb = (w >> 7) & 31, width;
         uint32_t mask;

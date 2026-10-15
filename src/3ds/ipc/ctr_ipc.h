@@ -6,7 +6,14 @@
 #define SNX_CTR_IPC_WORDS          64u
 #define SNX_CTR_IPC_BAD_DESCRIPTOR 0xd9001830u
 #define SNX_CTR_IPC_INVALID_STATE  0xe0a01bf5u
-enum { SNX_CTR_SERVICE_NONE, SNX_CTR_SERVICE_SRV, SNX_CTR_SERVICE_FS };
+enum {
+    SNX_CTR_SERVICE_NONE,
+    SNX_CTR_SERVICE_SRV,
+    SNX_CTR_SERVICE_FS,
+    SNX_CTR_SERVICE_APT,
+    SNX_CTR_SERVICE_PTM,
+    SNX_CTR_SERVICE_HID
+};
 typedef enum { SNX_CTR_IPC_RETURN, SNX_CTR_IPC_UNSUPPORTED, SNX_CTR_IPC_BLOCKED, SNX_CTR_IPC_FAULT } SnxCtrIpcState;
 struct SnxCtrProcess;
 /* Serialized stack-owned request/reply copies. Never a flat guest pointer.
@@ -27,5 +34,5 @@ void snx_ctr_ipc_error_reply(SnxCtrIpc* c, uint32_t result);
 /* Output handles are newly owned client-table references. Publication happens
    only after full TLS write preflight. Failed handlers must relinquish them. */
 void snx_ctr_ipc_drop_handle(SnxCtrIpc* c, uint32_t handle);
-void snx_ctr_ipc_output_handle(SnxCtrIpc* c, uint32_t first, uint32_t descriptor, uint32_t handle);
+void snx_ctr_ipc_output_handle(SnxCtrIpc* c, uint32_t word, uint32_t handle);
 #endif

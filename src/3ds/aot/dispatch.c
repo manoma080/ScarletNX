@@ -2,6 +2,7 @@
    Copyright 2026 the ScarletNX contributors */
 #include "ctr_module.h"
 #include "kernel/ctr_kernel.h"
+#include "runtime/internal.h"
 #include <string.h>
 
 bool snx_ctr_module_compatible(const SnxCtrModule* m, const SnxCtrImage* image) {
@@ -21,7 +22,7 @@ SnxCtrRunResult snx_ctr_dispatch(const SnxCtrModule* m, SnxCtrProcess* process, 
     *executed = 0;
     SnxArmCPU* cpu = snx_ctr_process_cpu(process);
     if (!cpu || !m) return SNX_CTR_RUN_FAULT;
-    if (snx_ctr_kernel_blocked(process)) return SNX_CTR_RUN_BLOCKED;
+    if (!snx_ctr_schedule(process)) return SNX_CTR_RUN_BLOCKED;
     while (*executed < limit) {
         uint32_t pc = cpu->r[15];
         bool thumb = !!(cpu->cpsr & SNX_ARM_T);
@@ -55,10 +56,14 @@ SnxCtrRunResult snx_ctr_dispatch(const SnxCtrModule* m, SnxCtrProcess* process, 
         if (cpu->exit == SNX_ARM_SVC) {
             SnxCtrSvcResult result = snx_ctr_svc(process, cpu->syndrome);
             if (result == SNX_CTR_SVC_EXIT) return SNX_CTR_RUN_EXIT;
-            if (result == SNX_CTR_SVC_BLOCKED) return SNX_CTR_RUN_BLOCKED;
+            if (result == SNX_CTR_SVC_BLOCKED) {
+                if (!snx_ctr_schedule(process)) return SNX_CTR_RUN_BLOCKED;
+                continue;
+            }
             if (result == SNX_CTR_SVC_UNSUPPORTED) return SNX_CTR_RUN_UNSUPPORTED;
             cpu->exit = SNX_ARM_OK;
             cpu->syndrome = 0;
+            if (!snx_ctr_schedule(process)) return SNX_CTR_RUN_BLOCKED;
             continue;
         }
         if (cpu->exit == SNX_ARM_BACKEND_UNSUPPORTED || cpu->exit == SNX_ARM_CODE_CHANGED)

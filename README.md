@@ -74,10 +74,11 @@ page-based memory controller. `SNX_3DS_AOT=ON` additionally enables an experimen
 **extract -> offline AOT -> native run** pipeline on native 64-bit Linux, using an
 explicit ARM11/checked-memory profile without changing shared A57 defaults.
 Larger images now use bounded chunked static CFG compilation (16 MiB text cap).
-SuperTux now creates its arbiter, allocates checked memory and runs startup locks,
-connects/registers `srv:`, then blocks awaiting absent `APT:S`, **before main,
-graphics or audio**. Initial checked CTR IPC uses a separate SwIPC mode. Serialized
-ARM11 exclusives work. VFP, cache/resume, full HLE and devices remain incomplete. The default
+SuperTux now completes minimal APT startup with real synchronization/thread
+resources, initializes HID handles and **reaches and executes main**. It then
+stops at unsupported FS OpenFileDirectly: **no first frame, audio or gameplay**.
+Checked CTR IPC uses a separate SwIPC mode; ARM11 exclusives and serialized
+native thread scheduling work. VFP, cache/resume, full HLE and devices remain incomplete. The default
 build still stops after extraction.
 See the [staged 3DS port](docs/3DS.md) for limits, build instructions and remaining work.
 

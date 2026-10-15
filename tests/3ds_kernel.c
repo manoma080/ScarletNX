@@ -174,6 +174,8 @@ int main(void) {
         put(p, 0x300000, UINT32_MAX);
         arbitrate(p, duplicate, 0x300000, 4, 0, 0, SNX_CTR_SVC_RETURN, TIMEOUT);
         assert(word(p, 0x300000) == UINT32_MAX - 1);
+        arbitrate(p, duplicate, 0x300000, 4, 0, 100, SNX_CTR_SVC_UNSUPPORTED, 0);
+        assert(word(p, 0x300000) == UINT32_MAX - 1 && !snx_ctr_kernel_blocked(p));
         close_handle(p, duplicate, 0);
         assert(object_count(p) == 2);
         uint32_t handles[CTR_HANDLES];

@@ -27,13 +27,15 @@
 
 uint32_t snx_ctr_handle_object(SnxCtrProcess* p, uint32_t handle) {
     if (handle == CTR_PROCESS_HANDLE) return 1;
-    if (handle == CTR_THREAD_HANDLE) return 2;
+    if (handle == CTR_THREAD_HANDLE) return p->current_thread;
     uint32_t slot = handle & 511, generation = handle >> 9;
     if (!slot || slot > CTR_HANDLES || !generation) return 0;
     CtrHandle* h = &p->handles[slot - 1];
     return h->generation == generation ? h->object : 0;
 }
-static uint32_t add_handle(SnxCtrProcess* p, uint32_t id, uint32_t* out) {
+uint32_t snx_ctr_handle_add(SnxCtrProcess* p, uint32_t id, uint32_t* out) {
+    *out = 0;
+    if (!id || id >= CTR_OBJECTS || !p->objects[id].type) return INVALID_HANDLE;
     for (unsigned i = 0; i < CTR_HANDLES; ++i) {
         CtrHandle* h = &p->handles[i];
         if (h->object) continue;
@@ -46,10 +48,11 @@ static uint32_t add_handle(SnxCtrProcess* p, uint32_t id, uint32_t* out) {
     return OUT_OF_HANDLES;
 }
 uint32_t snx_ctr_object_create(SnxCtrProcess* p, uint32_t type, uint32_t* out) {
+    *out = 0;
     for (unsigned i = 3; i < CTR_OBJECTS; ++i) {
         if (p->objects[i].type) continue;
         p->objects[i].type = type;
-        uint32_t result = add_handle(p, i, out);
+        uint32_t result = snx_ctr_handle_add(p, i, out);
         if (result) p->objects[i] = (CtrObject){0};
         return result;
     }
@@ -59,7 +62,7 @@ uint32_t snx_ctr_handle_close(SnxCtrProcess* p, uint32_t handle) {
     uint32_t id = snx_ctr_handle_object(p, handle);
     if (!id || handle == CTR_PROCESS_HANDLE || handle == CTR_THREAD_HANDLE) return INVALID_HANDLE;
     p->handles[(handle & 511) - 1].object = 0;
-    if (!--p->objects[id].refs) p->objects[id] = (CtrObject){0};
+    snx_ctr_object_release(p, id);
     return OK;
 }
 static uint32_t read32(SnxCtrProcess* p, uint32_t va, uint32_t* out) {
@@ -223,9 +226,26 @@ static SnxCtrSvcResult arbitrate(SnxCtrProcess* p, SnxArmCPU* cpu) {
         return SNX_CTR_SVC_RETURN;
     }
     if (type == 0) {
+        uint32_t remaining = threshold & 0x80000000u ? UINT32_MAX : threshold;
+        while (remaining) {
+            uint32_t best = 0;
+            for (uint32_t i = 1; i < CTR_OBJECTS; ++i) {
+                if (p->objects[i].type != CTR_OBJ_THREAD) continue;
+                CtrThread* t = &p->objects[i].data.thread;
+                if (t->waiting_object == id && t->waiting_address == va &&
+                    (!best || t->priority < p->objects[best].data.thread.priority))
+                    best = i;
+            }
+            if (!best) break;
+            CtrThread* t = &p->objects[best].data.thread;
+            t->waiting_object = t->waiting_address = 0;
+            t->context.r[0] = t->context.exit = t->context.syndrome = 0;
+            snx_ctr_object_release(p, id);
+            --remaining;
+        }
         r[0] = OK;
         return SNX_CTR_SVC_RETURN;
-    } /* no waiting peers in this model */
+    }
     uint32_t result = read32(p, va, &value);
     if (result) {
         r[0] = result;
@@ -237,6 +257,9 @@ static SnxCtrSvcResult arbitrate(SnxCtrProcess* p, SnxArmCPU* cpu) {
         r[0] = type >= 3 ? TIMED_OUT : OK;
         return SNX_CTR_SVC_RETURN;
     }
+    /* Finite nonzero deadlines need an actual timer. Refuse before the
+       decrement or wait publication, rather than turn them into infinity. */
+    if (type >= 3 && (r[4] || r[5]) && (r[4] != UINT32_MAX || r[5] != UINT32_MAX)) return SNX_CTR_SVC_UNSUPPORTED;
     if (type == 2 || type == 4) {
         result = write32(p, va, value - 1);
         if (result) {
@@ -248,11 +271,49 @@ static SnxCtrSvcResult arbitrate(SnxCtrProcess* p, SnxArmCPU* cpu) {
         r[0] = TIMED_OUT;
         return SNX_CTR_SVC_RETURN;
     }
-    p->waiting_object = id;
-    p->waiting_address = va;
+    snx_ctr_thread_block(p, id, va);
     return SNX_CTR_SVC_BLOCKED;
 }
-bool snx_ctr_kernel_blocked(const SnxCtrProcess* p) { return p && p->waiting_object; }
+static SnxCtrSvcResult wait_one(SnxCtrProcess* p, uint32_t* r) {
+    uint32_t id = snx_ctr_handle_object(p, r[0]);
+    if (!id) {
+        r[0] = INVALID_HANDLE;
+        return SNX_CTR_SVC_RETURN;
+    }
+    CtrObject* o = &p->objects[id];
+    if (o->type == CTR_OBJ_EVENT && o->data.event.signaled) {
+        if (!o->data.event.reset_type) o->data.event.signaled = 0;
+        r[0] = OK;
+        return SNX_CTR_SVC_RETURN;
+    }
+    if (o->type == CTR_OBJ_THREAD && o->data.thread.dead) {
+        r[0] = OK;
+        return SNX_CTR_SVC_RETURN;
+    }
+    if (o->type != CTR_OBJ_MUTEX && o->type != CTR_OBJ_EVENT && o->type != CTR_OBJ_THREAD)
+        return SNX_CTR_SVC_UNSUPPORTED;
+    if (o->type == CTR_OBJ_EVENT || o->type == CTR_OBJ_THREAD ||
+        (o->data.mutex.depth && o->data.mutex.owner != p->current_thread)) {
+        if (!r[2] && !r[3]) {
+            r[0] = TIMED_OUT;
+            return SNX_CTR_SVC_RETURN;
+        }
+        if (r[2] != UINT32_MAX || r[3] != UINT32_MAX) return SNX_CTR_SVC_UNSUPPORTED;
+        snx_ctr_thread_block(p, id, 0);
+        return SNX_CTR_SVC_BLOCKED;
+    }
+    if (o->data.mutex.depth == UINT32_MAX)
+        r[0] = INVALID_STATE;
+    else {
+        o->data.mutex.owner = p->current_thread;
+        ++o->data.mutex.depth;
+        r[0] = OK;
+    }
+    return SNX_CTR_SVC_RETURN;
+}
+bool snx_ctr_kernel_blocked(const SnxCtrProcess* p) {
+    return p && p->objects[p->current_thread].data.thread.waiting_object;
+}
 SnxCtrSvcResult snx_ctr_svc(SnxCtrProcess* p, uint32_t number) {
     if (!p) return SNX_CTR_SVC_UNSUPPORTED;
     if (snx_ctr_kernel_blocked(p)) return SNX_CTR_SVC_BLOCKED;
@@ -270,6 +331,76 @@ SnxCtrSvcResult snx_ctr_svc(SnxCtrProcess* p, uint32_t number) {
             return SNX_CTR_SVC_RETURN;
         }
         case 0x03: return SNX_CTR_SVC_EXIT;
+        case 0x08: {
+            if (r[4] != 0xfffffffeu && r[4] != 0) return SNX_CTR_SVC_UNSUPPORTED;
+            uint32_t out = 0, result = snx_ctr_thread_create(p, r, &out);
+            r[0] = result;
+            r[1] = out;
+            return SNX_CTR_SVC_RETURN;
+        }
+        case 0x14: {
+            uint32_t id = snx_ctr_handle_object(p, r[0]);
+            if (!id || p->objects[id].type != CTR_OBJ_MUTEX)
+                r[0] = INVALID_HANDLE;
+            else if (p->objects[id].data.mutex.owner != p->current_thread || !p->objects[id].data.mutex.depth)
+                r[0] = 0xd8e0041fu;
+            else {
+                if (!--p->objects[id].data.mutex.depth) {
+                    p->objects[id].data.mutex.owner = 0;
+                    snx_ctr_wake_waiters(p, id);
+                }
+                r[0] = OK;
+            }
+            return SNX_CTR_SVC_RETURN;
+        }
+        case 0x17: {
+            uint32_t out = 0;
+            if (r[1] > 1) return SNX_CTR_SVC_UNSUPPORTED;
+            uint32_t reset = r[1], result = snx_ctr_object_create(p, CTR_OBJ_EVENT, &out);
+            if (!result) p->objects[snx_ctr_handle_object(p, out)].data.event.reset_type = reset;
+            r[0] = result;
+            r[1] = out;
+            return SNX_CTR_SVC_RETURN;
+        }
+        case 0x18: {
+            uint32_t id = snx_ctr_handle_object(p, r[0]);
+            if (!id || p->objects[id].type != CTR_OBJ_EVENT)
+                r[0] = INVALID_HANDLE;
+            else {
+                p->objects[id].data.event.signaled = 1;
+                snx_ctr_wake_waiters(p, id);
+                r[0] = OK;
+            }
+            return SNX_CTR_SVC_RETURN;
+        }
+        case 0x19: {
+            uint32_t id = snx_ctr_handle_object(p, r[0]);
+            if (!id || p->objects[id].type != CTR_OBJ_EVENT)
+                r[0] = INVALID_HANDLE;
+            else {
+                p->objects[id].data.event.signaled = 0;
+                r[0] = OK;
+            }
+            return SNX_CTR_SVC_RETURN;
+        }
+        case 0x1f: {
+            uint32_t id = snx_ctr_handle_object(p, r[0]);
+            if (!id || p->objects[id].type != CTR_OBJ_SHARED)
+                r[0] = INVALID_HANDLE;
+            else {
+                CtrObject* o = &p->objects[id];
+                if ((r[1] & 4095) || r[1] < 0x10000000 || (uint64_t)r[1] + o->data.shared.size > 0x14000000)
+                    r[0] = INVALID_ADDRESS;
+                else if (r[2] != o->data.shared.permissions || (r[3] != 0 && r[3] != 0x10000000))
+                    return SNX_CTR_SVC_UNSUPPORTED;
+                else {
+                    SnxCtrMemResult mapped =
+                        snx_ctr_map(p->space, r[1], o->data.shared.physical, o->data.shared.size, r[2]);
+                    r[0] = mapped == SNX_CTR_MEM_OK ? OK : mapped == SNX_CTR_MEM_NOMEM ? OUT_OF_MEMORY : INVALID_STATE;
+                }
+            }
+            return SNX_CTR_SVC_RETURN;
+        }
         case 0x21: {
             uint32_t out = 0, result = snx_ctr_object_create(p, CTR_OBJ_ARBITER, &out);
             r[0] = result;
@@ -278,9 +409,11 @@ SnxCtrSvcResult snx_ctr_svc(SnxCtrProcess* p, uint32_t number) {
         }
         case 0x22: return arbitrate(p, cpu);
         case 0x23: r[0] = snx_ctr_handle_close(p, r[0]); return SNX_CTR_SVC_RETURN;
+        case 0x24: return wait_one(p, r);
+        case 0x25: return snx_ctr_wait_many(p, r);
         case 0x27: {
             uint32_t id = snx_ctr_handle_object(p, r[1]), out = 0;
-            r[0] = id ? add_handle(p, id, &out) : INVALID_HANDLE;
+            r[0] = id ? snx_ctr_handle_add(p, id, &out) : INVALID_HANDLE;
             r[1] = out;
             return SNX_CTR_SVC_RETURN;
         }

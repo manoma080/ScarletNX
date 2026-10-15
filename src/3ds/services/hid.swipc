@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright 2026 the ScarletNX contributors
+interface snx::ctr::hid is hid:USER {
+    [0xa] GetIPCHandles() -> (handle<copy> memory, handle<copy> pad1, handle<copy> pad2,
+                              handle<copy> accelerometer, handle<copy> gyroscope, handle<copy> debug_pad);
+}

@@ -2,14 +2,15 @@
 <!-- Copyright 2026 the ScarletNX contributors -->
 # Nintendo 3DS port
 
-## Status: stage 1 + stage 2a + stages 2b1–2b4 + initial 3a
+## Status: stage 1 + stage 2a + stages 2b1–2b4 + initial 3a/3b
 
 `scarletnx-3ds` extracts **decrypted application CIAs**. With `SNX_3DS_AOT=ON`,
 it performs **extract -> offline static AOT -> native module -> checked ARM/Thumb
 execution**. Both asset-free witnesses and the supplied SuperTux CIA's native
-startup gate pass. SuperTux now creates its address arbiter, allocates checked
-heap/linear memory, executes startup locks, connects/registers `srv:`, then
-**blocks awaiting absent `APT:S` (SVC 0x32), before `main`**. It is **not playable**, and there is no graphics/audio yet. See the
+startup gate pass. SuperTux completes minimal APT startup, creates a native
+background thread, initializes HID and **reaches and executes main** at
+`0x00167d88` (50,489 blocks). It stops at unsupported FS OpenFileDirectly after
+50,554 blocks / 58 SVCs. It is **not playable**; no first frame or audio yet. See the
 [SuperTux integration target](3DS-SUPERTUX.md) for the pinned input and next blockers.
 
 Text is bounded at **16 MiB**, using conservative static CFG discovery for larger
@@ -17,7 +18,9 @@ images. This is not complete indirect-target coverage or a general 3DS runtime.
 VFP remains unsupported. Stage 2b4 adds serialized ARM11 checked exclusives and
 a bounded kernel-bootstrap subset. Stage 2 still needs broader discovery/ISA
 validation and cache/resume. Initial stage 3a adds a SwIPC-derived CTR generator,
-checked transport and bounded service sessions. Full HLE/IPC and stages 4–6 remain pending. No firmware, keys, title assets or Azahar CPU engine are included.
+checked transport and bounded service sessions. Initial 3b adds the minimal
+APT/thread/event/mutex/PTM/HID startup personality and ARM11 UADD8/SEL.
+Full HLE/IPC and stages 4–6 remain pending. No firmware, keys, title assets or Azahar CPU engine are included.
 
 Implemented:
 
@@ -52,14 +55,17 @@ Implemented:
   linked into their executables.
 - Stage 2b2: raw ExHeader/expanded `.code` revalidation, RX/R/RW process mappings,
   zeroed page-appended BSS, guarded stack and one private initial TLS page.
-  `TPIDRURO` points at this page. There is no thread scheduler.
+  `TPIDRURO` points at this page. Initial 3b adds per-thread zeroed TLS slots
+  and serialized native context scheduling, not a host-thread/multicore scheduler.
 - Optional `scarletnx-3ds-aot`: separate offline LLVM compiler and native host
   linker, private staging/publication, versioned module ABI and exact image
   identity. Images up to 4096 bytes retain exhaustive one-instruction ARM/Thumb
   entries. Stage 2b3 adds conservative static CFG discovery for larger images:
   direct branches/calls, conditional continuations, literal/ADR code pointers,
   initialized RO/data pointer candidates, legacy Thumb BL pairs and a bounded
-  PC-relative ADD jump window. Blocks contain at most 32 guest instructions;
+  PC-relative ADD jump window. Initial 3b also recognizes adjacent unsigned
+  CMP / LDRLS PC-indexed tables with at most 256 entries; no unbounded sweep.
+  Blocks contain at most 32 guest instructions;
   bounded LLVM chunks are disposed between emissions, then statically linked.
   There is no runtime discovery/compilation. Uncovered targets stop explicitly.
 - Homebrew `.data` byte counts including BSS are accepted only if subtracting
@@ -78,9 +84,10 @@ Implemented:
   generation rollover, and table/object exhaustion returns errors without leaks.
 - SVC `0x21` creates real address-arbiter objects. `0x22` implements signal with no
   waiting peers, signed predicates, conditional decrement and immediate timeout.
-  A required wait stops as **BLOCKED**, not successful completion. Dispatch cannot
-  resume past that pending call. Scheduling, timed wakeups and other threads are
-  not implemented yet.
+  Initial 3b adds priority-ordered peer signaling. A required wait blocks the
+  actual thread and pins its object until a genuine wakeup. A native peer can
+  run; dispatch alone never completes a pending call. Finite pending deadlines
+  remain unsupported before mutation; timers are not implemented.
 - SVC `0x23` closes handles and `0x27` duplicates them. SVC `0x2a`, type 0, reports
   actual allocated FCRAM pages for the modeled memory regions. Other queries
   return an explicit unsupported result. ExitProcess (`0x03`) remains handled.
@@ -109,9 +116,12 @@ SVC `0x2d` connects to the actual `srv:` endpoint; `0x32` dispatches checked
 TLS command words; `0x35` identifies the actual process root. A separate SwIPC
 `--ctr` mode emits typed handlers without HIPC/CMIF or successful default stubs.
 `srv:` supports client registration and service lookup with real session
-ownership. FS supports PID/SDK session initialization, **not archive/file IO**.
-Unknown commands stop; absent-service waits become BLOCKED without a fake session
-or response and cannot resume. SuperTux currently waits for **APT:S**.
+ownership. Initial 3b adds a one-application APT startup lifecycle, real recursive
+lock/events, serialized thread contexts/waits/wakeups, PTM base/model queries
+and HID handles/read-only mapping. HID sampling is not implemented. FS supports
+PID/SDK initialization and an actual missing-SD error, **not archive/file IO**.
+Unknown commands stop; absent-service waits block the calling thread without a
+fake session/response. SuperTux reaches main, then stops at FS OpenFileDirectly.
 
 See [CTR IPC](CTR-IPC.md) for the strict generator subset, descriptor/permission
 checks, quotas, malformed-request policy, tests and unimplemented operations.
@@ -243,9 +253,12 @@ data/stack/TLS snapshots against pinned Unicorn ARM11 MPCore. A second CPU
 comparison reaches ConnectToPort with test-scripted HLE effects and complete
 heap/linear snapshots. The second comparison validates CPU behavior under that
 transcript, not hardware kernel semantics. A third comparison continues through
-scripted `srv:` connection/registration effects to the APT:S wait, again matching
+scripted `srv:` connection/registration effects to before APT lookup, again matching
 all GPRs/CPSR and complete RAM snapshots without independently proving IPC policy.
-Unicorn is never a runtime engine.
+Unicorn is never a runtime engine. The same native witness subsequently observes
+CRT entry into main and executes it to the next unsupported FS operation.
+Separate native CIA and unit tests exercise actual worker wakeups, resources
+and rollback. Service policy is not independently hardware-validated.
 No sample binaries are downloaded or distributed.
 
 ## Source provenance and licensing
@@ -343,7 +356,9 @@ Stage 2b3 removes the tiny-image restriction with bounded chunked static CFG
 compilation and passes the external SuperTux first-SVC native bootstrap gate.
 Stage 2b4 adds kernel-bootstrap objects, configuration, checked allocations and
 serialized ARM11 exclusives. That checkpoint reached ConnectToPort before `main`;
-initial 3a now passes `srv:` registration and blocks awaiting absent APT:S.
+initial 3a passed `srv:` registration and stopped at absent APT:S. Initial 3b
+now passes the bounded APT startup/thread/HID path and reaches main before an
+unsupported FS OpenFileDirectly request.
 **Stage 2 is not complete**: broader discovery/ISA coverage, full VFP, concurrent
 reservation/scheduling semantics, validated resume/cache and wider runtime
 validation remain pending.
@@ -381,9 +396,10 @@ wire adapter**: 3DS TLS command words, normal/translation counts, handles,
 static/mapped buffers and response layout are not Switch HIPC/CMIF.
 
 Initial 3a implements a strict generated subset, real session lifetimes, client
-registration/lookup and FS caller/SDK association. It does not implement FS
-resources or APT. The supplied title actually requests `APT:S` first; the full
-stage and OS/filesystem execution witness below remain unfinished.
+registration/lookup and FS caller/SDK association. Initial 3b adds the observed
+APT startup, native threads and bounded PTM/HID resources, not a full applet or
+input subsystem. The title reaches main; FS resources/file IO and the full
+stage/OS/filesystem witness below remain unfinished.
 
 - Threads, handles, events, waits, scheduling, SVCs, TLS, shared memory and result
   codes; checked guest buffers and handle lifetimes at every IPC boundary.

@@ -29,6 +29,8 @@ SnxCtrProcess* snx_ctr_process_new(const SnxCtrImage* image, SnxCtrModel model) 
     p->physical_end = p->physical_next + p->app_limit;
     p->objects[1] = (CtrObject){.type = CTR_OBJ_PROCESS, .refs = 1};
     p->objects[2] = (CtrObject){.type = CTR_OBJ_THREAD, .refs = 1};
+    p->current_thread = 2;
+    p->objects[2].data.thread.priority = 0x30;
     p->memory = snx_ctr_memory_new(model);
     if (!p->memory || !(p->space = snx_ctr_space_new(p->memory))) goto fail;
     size_t offset = 0;
@@ -53,6 +55,7 @@ SnxCtrProcess* snx_ctr_process_new(const SnxCtrImage* image, SnxCtrModel model) 
         !snx_ctr_cpu_init(&p->cpu, p->space, image->segment[0].address, SNX_CTR_STACK_TOP, false))
         goto fail;
     p->cpu.state.cpu.tpidruro = SNX_CTR_INITIAL_TLS;
+    p->objects[2].data.thread.context = p->cpu.state.cpu;
     /* Configuration-page layout and kernel personality facts from Citra/Azahar
        config_mem.{h,cpp}, memory.cpp (GPL-2.0-or-later, revision in docs/3DS.md).
        No firmware is loaded. User mappings are read-only. */

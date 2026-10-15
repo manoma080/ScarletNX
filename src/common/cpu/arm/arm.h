@@ -72,7 +72,9 @@ typedef enum {
     SNX_A32_SVC,
     SNX_A32_BKPT,
     SNX_A32_TLS,
-    SNX_A32_VECTOR
+    SNX_A32_VECTOR,
+    SNX_A32_UADD8,
+    SNX_A32_SEL
 } SnxA32Kind;
 
 /* Reserved, privileged and unpredictable encodings are rejected.

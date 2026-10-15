@@ -39,6 +39,7 @@ SnxCtrMemory* snx_ctr_memory_new(SnxCtrModel model) {
     }
     return m;
 }
+const SnxCtrProfile* snx_ctr_memory_profile(const SnxCtrMemory* m) { return m ? m->profile : NULL; }
 void snx_ctr_memory_free(SnxCtrMemory* m) {
     if (!m) return;
     for (size_t i = 0; i < 8; ++i) free(m->backing[i]);

@@ -53,12 +53,12 @@ int snx_ctr_aot_run(const char* driver, const char* directory, SnxCtrModel model
         snprintf(error, error_size,
                  "%s: pc=0x%08" PRIx32 " exit=%u syndrome=0x%08" PRIx32 " blocks=%" PRIu64 " svcs=%" PRIu64
                  " last_svc=0x%02" PRIx32 " ipc_service=%" PRIu32 " ipc_header=0x%08" PRIx32 " wait_service=%s",
-                 state == SNX_CTR_RUN_BLOCKED       ? "guest blocked (scheduler not implemented)"
+                 state == SNX_CTR_RUN_BLOCKED       ? "guest blocked (no runnable thread)"
                  : state == SNX_CTR_RUN_BUDGET      ? "static block budget exhausted"
                  : state == SNX_CTR_RUN_UNSUPPORTED ? "unsupported guest operation or missing static entry"
                                                     : "guest fault",
                  cpu->r[15], cpu->exit, cpu->syndrome, executed, process->svc_count, process->last_svc,
-                 process->last_ipc_service, process->last_ipc_header, process->waiting_service);
+                 process->last_ipc_service, process->last_ipc_header, snx_ctr_thread(process)->waiting_service);
         result = state == SNX_CTR_RUN_FAULT ? 1 : 3;
     }
 done:

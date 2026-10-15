@@ -16,13 +16,38 @@
 /* Physical page ownership, not a replacement for the checked page controller. */
 enum { CTR_UNUSED, CTR_STATIC, CTR_HEAP_PAGE, CTR_LINEAR_PAGE };
 #define CTR_PROCESS_ID 0x10u
-enum { CTR_OBJ_FREE, CTR_OBJ_PROCESS, CTR_OBJ_THREAD, CTR_OBJ_ARBITER, CTR_OBJ_SESSION };
+enum {
+    CTR_OBJ_FREE,
+    CTR_OBJ_PROCESS,
+    CTR_OBJ_THREAD,
+    CTR_OBJ_ARBITER,
+    CTR_OBJ_SESSION,
+    CTR_OBJ_MUTEX,
+    CTR_OBJ_EVENT,
+    CTR_OBJ_SHARED
+};
+typedef struct {
+    SnxArmCPU context; /* inactive architectural prefix only; never the checked adapter */
+    uint32_t priority, dead, waiting_object, waiting_address;
+    uint32_t wait_multiple, wait_all, wait_more_count, wait_more[63];
+    char waiting_service[9];
+} CtrThread;
 typedef struct {
     uint32_t type, refs;
     union {
         struct {
             uint32_t service, client_pid, sdk_version;
         } session;
+        CtrThread thread;
+        struct {
+            uint32_t physical, size, permissions;
+        } shared;
+        struct {
+            uint32_t owner, depth;
+        } mutex;
+        struct {
+            uint32_t signaled, reset_type;
+        } event; /* one-shot or sticky */
     } data;
 } CtrObject;
 typedef struct {
@@ -35,13 +60,24 @@ struct SnxCtrProcess {
     uint32_t physical_next, physical_end, app_limit;
     CtrObject objects[CTR_OBJECTS];
     CtrHandle handles[CTR_HANDLES];
-    uint32_t last_svc, waiting_object, waiting_address;
+    uint32_t last_svc, current_thread;
     uint32_t last_ipc_service, last_ipc_header;
-    char waiting_service[9];
+    uint32_t apt_lock; /* manager-owned object index; independent of client sessions */
+    uint32_t apt_phase, apt_notification, apt_parameter;
+    uint32_t hid_objects[6];
+    uint32_t shell_closed; /* virtual console starts with its shell open */
     uint64_t svc_count;
     unsigned char physical_owner[];
 };
+CtrThread* snx_ctr_thread(SnxCtrProcess* p);
+uint32_t snx_ctr_thread_create(SnxCtrProcess* p, const uint32_t* registers, uint32_t* out);
+bool snx_ctr_schedule(SnxCtrProcess* p);
+SnxCtrSvcResult snx_ctr_wait_many(SnxCtrProcess* p, uint32_t* registers);
+void snx_ctr_wake_waiters(SnxCtrProcess* p, uint32_t object);
+void snx_ctr_object_release(SnxCtrProcess* p, uint32_t object);
+void snx_ctr_thread_block(SnxCtrProcess* p, uint32_t object, uint32_t address);
 uint32_t snx_ctr_handle_object(SnxCtrProcess* p, uint32_t handle);
+uint32_t snx_ctr_handle_add(SnxCtrProcess* p, uint32_t object, uint32_t* out);
 uint32_t snx_ctr_object_create(SnxCtrProcess* p, uint32_t type, uint32_t* out);
 uint32_t snx_ctr_handle_close(SnxCtrProcess* p, uint32_t handle);
 uint32_t snx_ctr_session_create(SnxCtrProcess* p, uint32_t service, uint32_t* out);

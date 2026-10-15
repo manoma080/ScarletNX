@@ -3,7 +3,7 @@
 /* Separate CTR wire emitter using SwIPC's lexer/AST/output utilities. No HIPC,
    CMIF, domains, alignment sorting, buffer attributes or successful stubs. */
 static void ctr_check_cmd(Cmd* c) {
-    int i, j, pid = 0;
+    int i, j, pid = 0, previous_move = -1;
     unsigned long normal[2] = {0, 0}, translated[2] = {0, 0};
     if (c->id > 65535) fail_at(c->line, "CTR command id exceeds 16 bits");
     if (c->stub || c->unsorted) fail_at(c->line, "CTR does not support @stub or @unsorted");
@@ -17,8 +17,10 @@ static void ctr_check_cmd(Cmd* c) {
             if (pid++) fail_at(c->line, "one CTR pid descriptor at most");
             translated[0] += 2;
         } else if (t->kind == TK_HANDLE && a->out) {
-            a->offset = translated[1];
-            translated[1] += 2;
+            a->index = previous_move != t->move;
+            if (a->index) ++translated[1]; /* one descriptor per contiguous handle kind */
+            a->offset = translated[1]++;
+            previous_move = t->move;
         } else if (t->kind == TK_INT && !t->is_signed && (t->size == 4 || t->size == 8)) {
             normal[a->out] += t->size / 4;
         } else if (t->kind == TK_BYTES && t->size <= 240 && !(t->size & 3)) {
@@ -114,10 +116,21 @@ static void ctr_unpack(const Iface* f, const Cmd* c) {
         const Arg* a = &args[i];
         Type* t = &types[resolve(a->type)];
         if (!a->out) continue;
-        if (t->kind == TK_HANDLE)
-            emit("    snx_ctr_ipc_output_handle(c, %lu, 0x%x, a_%s);\n", c->out_size + 2 + a->offset, t->move ? 16 : 0,
-                 a->name);
-        else if (t->kind == TK_BYTES)
+        if (t->kind == TK_HANDLE) {
+            if (a->index) {
+                unsigned long count = 1;
+                int j;
+                for (j = i + 1; j < c->arg0 + c->nargs; ++j) {
+                    Type* next_type = &types[resolve(args[j].type)];
+                    if (!args[j].out || next_type->kind != TK_HANDLE) continue;
+                    if (next_type->move != t->move) break;
+                    ++count;
+                }
+                emit("    c->out[%lu] = 0x%lxu;\n", c->out_size + 1 + a->offset,
+                     ((count - 1) << 26) | (t->move ? 16ul : 0ul));
+            }
+            emit("    snx_ctr_ipc_output_handle(c, %lu, a_%s);\n", c->out_size + 2 + a->offset, a->name);
+        } else if (t->kind == TK_BYTES)
             emit("    snx_ctr_ipc_put_bytes(c, %lu, a_%s, %lu);\n", a->offset, a->name, t->size);
         else {
             emit("    c->out[%lu] = (uint32_t)a_%s;\n", a->offset, a->name);

@@ -90,6 +90,18 @@ static bool arm(Discovery* d, uint32_t pc, uint32_t w) {
             for (unsigned i = 0; i < 128; ++i) enqueue(d, pc + 8 + i * 4, false);
     } else if (k == SNX_A32_SINGLE || k == SNX_A32_EXTRA) {
         stop = rd == 15 && !!(w & (1u << 20));
+        /* CMP Rm,#N; LDRLS PC,[PC,Rm,LSL#2]. The adjacent unconditional
+           unsigned bound proves a finite inline address table. No runtime
+           target discovery, arbitrary text-pointer sweep or guessed bound. */
+        uint32_t bound;
+        if (k == SNX_A32_SINGLE && (w & 0xfffffff0u) == 0x979ff100u && pc >= d->plan->address + 4 &&
+            read_word(d->image, pc - 4, &bound) && (bound & 0xfff0f000u) == 0xe3500000u &&
+            ((bound >> 16) & 15) == (w & 15) && immediate(bound) < 256) {
+            for (uint32_t i = 0; i <= immediate(bound); ++i) {
+                uint32_t target;
+                if (read_word(d->image, pc + 8 + i * 4, &target)) pointer(d, target);
+            }
+        }
         if (k == SNX_A32_SINGLE && ((w >> 16) & 15) == 15 && !(w & ((1u << 25) | (1u << 22))) && (w & (1u << 24)) &&
             (w & (1u << 20))) {
             uint32_t value, at = (w & (1u << 23)) ? pc + 8 + (w & 4095) : pc + 8 - (w & 4095);

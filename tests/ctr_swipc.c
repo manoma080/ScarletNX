@@ -36,14 +36,13 @@ void snx_ctr_ipc_drop_handle(SnxCtrIpc* c, uint32_t handle) {
         --owned;
     }
 }
-void snx_ctr_ipc_output_handle(SnxCtrIpc* c, uint32_t first, uint32_t descriptor, uint32_t handle) {
+void snx_ctr_ipc_output_handle(SnxCtrIpc* c, uint32_t word, uint32_t handle) {
     if (!handle) {
         c->state = SNX_CTR_IPC_FAULT;
         return;
     }
     assert(handle == 0x222 && owned == 1);
-    c->out[first] = descriptor;
-    c->out[first + 1] = handle;
+    c->out[word] = handle;
 }
 static uint32_t test_ctr_RoundTrip(SnxCtrIpc* c, uint32_t tag, uint64_t value, const uint8_t* name, uint32_t process,
                                    uint64_t* echoed, uint8_t* copy, uint32_t* identity) {

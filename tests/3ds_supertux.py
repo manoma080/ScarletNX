@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright 2026 the ScarletNX contributors
-"""Optional pinned user-supplied SuperTux CIA native BOOT gate, NOT gameplay.
+"""Optional pinned user-supplied SuperTux CIA native main-entry gate, NOT gameplay.
 No download, title assets or native cache are shipped/reused. Takes DRIVER CIA PROBE.
 """
 
@@ -154,7 +154,7 @@ def oracle(output, native):
     ]:
         assert hashlib.sha256(emu.mem_read(address, length)).hexdigest() == values[f'ipc_{name}'], name
     print(
-        'Independent CPU reference matches all GPRs/CPSR and RAM at the APT:S wait under a scripted IPC transcript; not an independent IPC-policy oracle.'
+        'Independent CPU reference matches all GPRs/CPSR and RAM before APT:S lookup handling under a scripted IPC transcript; not an independent IPC-policy oracle.'
     )
 
 
@@ -171,9 +171,9 @@ def main():
         text = result.stdout + result.stderr
         print(text)
         assert result.returncode == 3 and 'syndrome=0x00000032' in result.stderr
-        assert 'pc=0x001def50' in result.stderr and 'blocks=31018' in result.stderr
-        assert 'guest blocked' in result.stderr and 'wait_service=APT:S' in result.stderr
-        assert 'svcs=7' in result.stderr and 'ipc_header=0x00050100' in result.stderr
+        assert 'pc=0x001def50' in result.stderr and 'blocks=50554' in result.stderr
+        assert 'unsupported guest operation' in result.stderr
+        assert 'svcs=58' in result.stderr and 'ipc_header=0x08030204' in result.stderr
         assert 'Running ARM11 static AOT' in result.stdout and 'Guest ExitProcess' not in text
         assert 'AddressSanitizer' not in text and 'runtime error:' not in text
         assert (
@@ -184,10 +184,11 @@ def main():
         assert not list(output.rglob('.snx-*'))
         state = subprocess.run([probe, str(output), 'supertux_boot'], text=True, capture_output=True, timeout=30)
         print(state.stdout, state.stderr)
-        assert state.returncode == 0 and 'blocked awaiting absent APT:S' in state.stdout
+        assert state.returncode == 0 and 'CPU gate before APT:S lookup handling' in state.stdout
+        assert 'SuperTux main entry reached: pc=0x00167d88 blocks=50489' in state.stdout
         if '--oracle' in sys.argv[4:]:
             oracle(output, state.stdout)
-    print('Pinned SuperTux extraction/static compilation/native startup gate passed; kernel/HLE still blocks gameplay.')
+    print('Pinned SuperTux reaches and executes main; stops at FS OpenFileDirectly, before graphics/audio/gameplay.')
 
 
 if __name__ == '__main__':

@@ -46,6 +46,13 @@ SnxA32Kind snx_a32_decode_profile(SnxArmProfile profile, uint32_t w) {
     uint32_t cp = w & 0x0fff0fff;
     if ((w >> 28) != 15 && ((w >> 12) & 15) != 15 && (cp == 0x0e070fba || cp == 0x0e070f9a || cp == 0x0e070f95))
         return SNX_A32_BARRIER;
+    /* ARMv6 packed-byte operations used by libc. Keep the default A57
+       decoder/emitter contract unchanged; admit only these exact ARM11 forms. */
+    uint32_t packed = w & 0x0ff00ff0;
+    if ((packed == 0x06500f90 || packed == 0x06800fb0) && (w >> 28) != 15) {
+        if (((w >> 16) & 15) == 15 || ((w >> 12) & 15) == 15 || (w & 15) == 15) return SNX_A32_UNDEFINED;
+        return packed == 0x06500f90 ? SNX_A32_UADD8 : SNX_A32_SEL;
+    }
     SnxA32Kind kind = snx_a32_decode(w);
     switch (kind) {
         case SNX_A32_MOVW:

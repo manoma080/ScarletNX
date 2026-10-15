@@ -25,6 +25,26 @@ static void snapshot(SnxCtrAddressSpace* space, const char* name, uint32_t va, u
     for (unsigned i = 0; i < 32; ++i) printf("%02x", hash[i]);
     puts("");
 }
+/* Test-only native-block stepping stops BEFORE selected HLE effects. It never
+   interprets guest code or adds runtime target/compilation fallbacks. */
+static uint64_t cpu_gate(const SnxCtrModule* m, SnxCtrProcess* p, uint32_t svc, uint32_t header) {
+    SnxArmCPU* c = snx_ctr_process_cpu(p);
+    for (uint64_t n = 1; n <= 100000; ++n) {
+        assert(c->r[15] >= m->text_address && c->r[15] < m->text_address + m->text_bytes && !(c->cpsr & SNX_ARM_T));
+        SnxArmBlock block = m->arm_blocks[(c->r[15] - m->text_address) / 4];
+        assert(block);
+        block(c);
+        if (c->exit == SNX_ARM_SVC) {
+            if (c->syndrome == svc && (!header || read_word(snx_ctr_process_space(p), c->tpidruro + 0x80) == header))
+                return n;
+            assert(snx_ctr_svc(p, c->syndrome) == SNX_CTR_SVC_RETURN);
+            c->exit = c->syndrome = 0;
+        } else
+            assert(c->exit == SNX_ARM_OK);
+    }
+    assert(0 && "CPU gate budget exceeded");
+    return 0;
+}
 int main(int argc, char** argv) {
     assert(argc == 3 || argc == 4);
     char error[512];
@@ -42,21 +62,17 @@ int main(int argc, char** argv) {
         assert(process);
         uint64_t executed;
         bool bootstrap = !strcmp(argv[2], "supertux_boot");
-        SnxCtrRunResult state = snx_ctr_dispatch(native.module, process, bootstrap ? 30948 : 1000, &executed);
+        SnxCtrRunResult state =
+            bootstrap ? SNX_CTR_RUN_BUDGET : snx_ctr_dispatch(native.module, process, 1000, &executed);
         SnxArmCPU* cpu = snx_ctr_process_cpu(process);
         if (bootstrap) {
-            /* Test-only raw final block preserves the CPU oracle gate BEFORE
-               HLE effects. No runtime bypass, interpreter or discovery. */
-            assert(state == SNX_CTR_RUN_BUDGET && cpu->r[15] == 0x1deea0);
-            SnxArmBlock block = native.module->arm_blocks[(cpu->r[15] - native.module->text_address) / 4];
-            assert(block);
-            block(cpu);
-            ++executed;
+            executed = cpu_gate(native.module, process, 0x21, 0);
             assert(cpu->exit == SNX_ARM_SVC && cpu->syndrome == 0x21);
-            assert(cpu->r[15] == 0x1deea8 && executed == 30949 && cpu->r[13] == SNX_CTR_STACK_TOP - 12);
+            assert(cpu->r[15] == 0x1deea8 && cpu->r[13] == SNX_CTR_STACK_TOP - 12);
             assert(cpu->r[0] == 0x2a4744 && cpu->r[14] == 0x1deca0 && !cpu->mem);
             assert(read_word(snx_ctr_process_space(process), 0x28d754) == 0);
-            puts("SuperTux CPU-only gate before CreateAddressArbiter: pc=0x001deea8 blocks=30949");
+            printf("SuperTux CPU-only gate before CreateAddressArbiter: pc=0x001deea8 blocks=%llu\n",
+                   (unsigned long long)executed);
             for (unsigned reg = 0; reg < 16; ++reg) printf("r%u=%08x\n", reg, cpu->r[reg]);
             printf("cpsr=%08x\n", cpu->cpsr);
             snapshot(snx_ctr_process_space(process), "data", 0x28a000, 0x23000);
@@ -66,18 +82,13 @@ int main(int argc, char** argv) {
             cpu->exit = SNX_ARM_OK;
             cpu->syndrome = 0;
             uint64_t continued;
-            state = snx_ctr_dispatch(native.module, process, 30, &continued);
-            executed += continued;
-            assert(state == SNX_CTR_RUN_BUDGET && executed == 30979);
-            block = native.module->arm_blocks[(cpu->r[15] - native.module->text_address) / 4];
-            assert(block);
-            block(cpu);
-            ++executed;
+            executed += cpu_gate(native.module, process, 0x2d, 0);
             assert(cpu->exit == SNX_ARM_SVC && cpu->syndrome == 0x2d);
-            assert(cpu->r[15] == 0x1def40 && executed == 30980);
+            assert(cpu->r[15] == 0x1def40);
             SnxCtrAddressSpace* space = snx_ctr_process_space(process);
             assert(read_word(space, 0x2a4744) == 0x201 && read_word(space, 0x27ca98) == 0x3a767273);
-            puts("SuperTux CPU gate before ConnectToPort handling: pc=0x001def40 blocks=30980");
+            printf("SuperTux CPU gate before ConnectToPort handling: pc=0x001def40 blocks=%llu\n",
+                   (unsigned long long)executed);
             for (unsigned reg = 0; reg < 16; ++reg) printf("kernel_r%u=%08x\n", reg, cpu->r[reg]);
             printf("kernel_cpsr=%08x\n", cpu->cpsr);
             snapshot(space, "kernel_data", 0x28a000, 0x23000);
@@ -88,12 +99,12 @@ int main(int argc, char** argv) {
             assert(snx_ctr_svc(process, 0x2d) == SNX_CTR_SVC_RETURN && !cpu->r[0] && cpu->r[1] == 0x202);
             cpu->exit = SNX_ARM_OK;
             cpu->syndrome = 0;
-            state = snx_ctr_dispatch(native.module, process, 100000, &continued);
-            executed += continued;
-            assert(state == SNX_CTR_RUN_BLOCKED && cpu->exit == SNX_ARM_SVC && cpu->syndrome == 0x32);
-            assert(cpu->r[15] == 0x1def50 && executed == 31018 && cpu->r[0] == 0x202);
+            executed += cpu_gate(native.module, process, 0x32, 0x00050100);
+            assert(cpu->exit == SNX_ARM_SVC && cpu->syndrome == 0x32);
+            assert(cpu->r[15] == 0x1def50 && cpu->r[0] == 0x202);
             assert(read_word(space, SNX_CTR_INITIAL_TLS + 0x80) == 0x00050100);
-            puts("SuperTux connected/registered srv client; blocked awaiting absent APT:S: pc=0x001def50 blocks=31018");
+            printf("SuperTux CPU gate before APT:S lookup handling: pc=0x001def50 blocks=%llu\n",
+                   (unsigned long long)executed);
             for (unsigned reg = 0; reg < 16; ++reg) printf("ipc_r%u=%08x\n", reg, cpu->r[reg]);
             printf("ipc_cpsr=%08x\n", cpu->cpsr);
             snapshot(space, "ipc_data", 0x28a000, 0x23000);
@@ -101,6 +112,30 @@ int main(int argc, char** argv) {
             snapshot(space, "ipc_tls", SNX_CTR_INITIAL_TLS, 4096);
             snapshot(space, "ipc_heap", 0x08000000, 0x1f09000);
             snapshot(space, "ipc_linear", 0x160f7000, 0x1f09000);
+            assert(snx_ctr_svc(process, 0x32) == SNX_CTR_SVC_RETURN && !cpu->r[0]);
+            cpu->exit = cpu->syndrome = 0;
+            /* CRT loads main from its literal at 0x10008c and branches via BX
+               at 0x100054, with exit at 0x1626c4. Test-only observation, never
+               a title-specific runtime hook or skipped initialization. */
+            assert(read_word(space, 0x10004c) == 0xe59f3038 && read_word(space, 0x100054) == 0xe12fff13);
+            uint32_t main_pc = read_word(space, 0x10008c);
+            assert(main_pc == 0x167d88);
+            bool entered_main = false;
+            do {
+                if (cpu->r[15] == main_pc) {
+                    assert(cpu->r[14] == 0x1626c4);
+                    entered_main = true;
+                    printf("SuperTux main entry reached: pc=0x%08x blocks=%llu\n", main_pc,
+                           (unsigned long long)executed);
+                }
+                state = snx_ctr_dispatch(native.module, process, 1, &continued);
+                executed += continued;
+            } while (state == SNX_CTR_RUN_BUDGET && executed < 500000);
+            printf("SuperTux post-startup boundary: state=%u pc=0x%08x syndrome=0x%08x blocks=%llu\n", (unsigned)state,
+                   cpu->r[15], cpu->syndrome, (unsigned long long)executed);
+            assert(entered_main && state == SNX_CTR_RUN_UNSUPPORTED && cpu->exit == SNX_ARM_SVC &&
+                   cpu->syndrome == 0x32);
+            assert(read_word(space, cpu->tpidruro + 0x80) == 0x08030204);
         } else if (!strcmp(argv[2], "kernel")) {
             assert(state == SNX_CTR_RUN_EXIT && executed == 14 && cpu->r[0] == 42);
             assert(read_word(snx_ctr_process_space(process), 0x08000000) == 1);

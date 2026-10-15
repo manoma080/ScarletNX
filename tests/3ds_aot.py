@@ -76,8 +76,49 @@ def ipc_program(wait=False):
     for at, register, value in literals:
         words[at] = 0xE59F0000 | register << 12 | ((len(words) - at - 2) * 4)
         words.append(value)
-    ro = b'srv:\0'.ljust(16, b'\0') + struct.pack('<5I', 0x00050100, 0x3A545041, 0x53, 5, 0)
+    ro = b'srv:\0'.ljust(16, b'\0') + struct.pack('<5I', 0x00050100, 0x5353494D, 0x474E49, 7, 0)
     return application(words, ro=ro)
+
+
+def thread_program():
+    # Real guest SVCs: main blocks, a lower-priority native worker signals the
+    # event, and the saved main context resumes. No scripted HLE effects.
+    words, literals, failures = [], [], []
+
+    def literal(register, value):
+        literals.append((len(words), register, value))
+        words.append(0)
+
+    def require_zero():
+        words.append(0xE3500000)
+        failures.append(len(words))
+        words.append(0)
+
+    words.extend([0xE3A01000, 0xEF000017])
+    require_zero()
+    words.append(0xE1A07001)
+    literal(5, 0x300000)
+    words.extend([0xE5857000, 0xE3A00031])
+    literal(1, lambda: 0x100000 + child * 4)
+    words.append(0xE3A02025)
+    literal(3, 0x0FFFF000)
+    words.extend([0xE3E04001, 0xEF000008])
+    require_zero()
+    words.extend([0xE1A00007, 0xE3E02000, 0xE3E03000, 0xEF000024])
+    require_zero()
+    words.extend([0xE5950004, 0xE350002A])
+    failures.append(len(words))
+    words.extend([0, 0xEF000003])
+    child = len(words)
+    literal(4, 0x300000)
+    words.extend([0xE5940000, 0xE3A0102A, 0xE5841004, 0xEF000018, 0xE1200070])
+    failure = len(words) - 1
+    for at in failures:
+        words[at] = 0x1A000000 | ((failure - at - 2) & 0xFFFFFF)
+    for at, register, value in literals:
+        words[at] = 0xE59F0000 | register << 12 | ((len(words) - at - 2) * 4)
+        words.append(value() if callable(value) else value)
+    return application(words)
 
 
 def descriptor_offset(blob):
@@ -206,10 +247,11 @@ def main():
                 ]
             ),
             3,
-            'guest blocked (scheduler not implemented)',
+            'guest blocked (no runnable thread)',
         )
+        run(thread_program(), message='Guest ExitProcess: r0=42')
         run(ipc_program(), message='Guest ExitProcess: r0=42')
-        run(ipc_program(wait=True), 3, 'wait_service=APT:S')
+        run(ipc_program(wait=True), 3, 'wait_service=MISSING')
         run(application([0xEE300A01]), 3, 'unsupported guest operation')  # VFPv2
         run(application([0xE3010234]), 1, 'guest fault')  # MOVW is not ARM11
         run(application([0xE3A01000, 0xE5910000]), 1, 'guest fault')  # unmapped data

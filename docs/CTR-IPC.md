@@ -1,6 +1,6 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <!-- Copyright 2026 the ScarletNX contributors -->
-# Initial CTR IPC (3a)
+# CTR IPC and minimal startup services (3a/3b)
 
 This is **not** Switch HIPC/CMIF. It reuses the lexer/AST/output utilities of
 `tools/swipc/swipc.c`, with a separate `--ctr` validator/emitter in `ctr.inc`.
@@ -12,15 +12,16 @@ for that separate profile, and [3DS status](3DS.md) for outstanding work.
 - A command occupies 64 little-endian words at the active thread's TLS + `0x80`.
   Header bits 31:16 are the command ID, 11:6 normal-word count, 5:0 translated-word
   count; bits 15:12 must be zero. Header plus both regions must fit 64 words.
-- The initial runtime has one initial thread with a `0x200`-aligned TLS slot.
+- Each native guest thread has its own zeroed, `0x200`-aligned TLS slot.
   Full RAM read/write permissions are checked **before** invoking handlers or
   allocating output handles. MMIO is never used for command-buffer transfers.
   Serialization makes the write preflight stable through response publication.
 - Translation framing checks descriptor forms and payload counts, classifying
   buffers before handles. PID is a 32-bit kernel-supplied caller identity, not
-  the value claimed by the guest. Incoming handles and static/PXI/mapped buffers
-  are recognized but remain **unsupported**; addresses are not dereferenced or
-  interpreted using Switch descriptors. Static-buffer tables are not implemented.
+  the value claimed by the guest. Incoming handles and PXI/mapped buffers remain
+  **unsupported**. Static buffers are accepted only by the checked APT utility /
+  ReceiveParameter and FS absent-SD paths below, not via a general schema type.
+  Other static-buffer commands stop explicitly; Switch descriptors are never used.
 - The response repeats the command ID; its first normal word is the service
   result. Transport SVC result and service result are distinct. Failed service
   calls publish a result-only response. Malformed requests return a transport
@@ -29,10 +30,12 @@ for that separate profile, and [3DS status](3DS.md) for outstanding work.
 - Sessions are real typed kernel objects. Duplicates share state and retain a
   reference; final close frees the object. Output handles are newly owned client
   references, published with the declared copy/move descriptor and relinquished
-  on handler failure. HLE has no separate server address space/handle table yet.
+  on handler failure. Contiguous output handles of the same kind share one
+  descriptor, including APT's two copied events and HID's six copied handles. HLE has no separate server address space/handle table yet.
 - Bounds are 256 handles/256 object slots including roots; endpoint caps are
   64 `srv:` and 32 FS sessions. These are bounded implementation quotas, not
-  complete hardware resource-limit/ExHeader capability enforcement.
+  complete hardware resource-limit/ExHeader capability enforcement. APT/PTM/HID
+  session caps are 2 each; thread cap is 16 including the initial thread.
 
 ## Generator subset
 
@@ -67,20 +70,48 @@ other translation units include the generated `.h`.
   GetProcessId (`0x35`) identifies the real single application's process root;
   PID `0x10` is local to that independently owned board/process instance.
 - `srv:` RegisterClient (`1`) associates the caller process with that session.
-  GetServiceHandle (`5`) returns real FS sessions. An absent endpoint with the
-  non-wait flag returns ServiceNotRegistered; a waiting request becomes BLOCKED
-  without a response/session. Dispatch cannot resume past it. No registration
-  wakeups, service-install API or scheduler are implemented yet.
+  GetServiceHandle (`5`) returns real FS/APT/PTM/HID sessions. An absent endpoint
+  with the non-wait flag returns ServiceNotRegistered; a waiting request blocks
+  its actual thread without a response/session. Peers can execute; the wait is
+  not completed without registration. Dynamic service installation is unsupported.
 - `fs:USER` Initialize (`0x801`) and InitializeWithSdkVersion (`0x861`) record
-  caller/SDK association. **No archives/files are opened or mounted.** All other
-  FS commands stop explicitly. FS initialization is synthetic-test validated;
-  the supplied title has not reached it yet.
+  caller/SDK association. OpenArchive (`0x80c`) accepts only archive 9, empty
+  path and a checked size-one static-buffer descriptor, returning FS NotFound
+  (`0xc8804478`) because this virtual console has no SD backing. **No archives /
+  files are opened or mounted.** Other FS operations remain unsupported.
+- `APT:S`: GetLockHandle (`1`), Initialize (`2`), Enable (`3`), NotifyToWait
+  (`0x43`), ReceiveParameter (`0xd`), AppletUtility (`0x4b`), IsNew3DS (`0x102`).
+  One application slot (`0x300`, attributes 0), persistent recursive mutex,
+  one-shot notification/parameter events and a real initial pending Wakeup.
+  Unsupported applet attributes/identities/transitions stop explicitly. Duplicate
+  initialization returns AlreadyExists and does not replace the slot.
+- APT utility supports only operation 7 (release the initial startup transition,
+  input `0x10`) and operation 4 (sleep-if-shell-closed, input 0, open shell only).
+  A closed-shell sleep request is unsupported. Readiness/Wakeup consumption is
+  phase-checked. ReceiveParameter returns an empty Wakeup with a **null object**,
+  not a fabricated handle or payload. It consumes the parameter only after full
+  command, descriptor and destination preflight. The checked TLS static table
+  at +`0x180` must declare the expected buffer ID/capacity; MMIO is refused.
+- `ptm:sysm`: model query (`0x40a`) and ConfigureNew3DSCPU (`0x818`) for the
+  existing base configuration **0 only**. Boost/L2/other configurations stop.
+- `hid:USER`: GetIPCHandles (`0xa`) returns actual system-pool shared memory
+  and five one-shot events. MapMemoryBlock (`0x1f`) supports only the fixed HID
+  read-only page at `0x10000000` (permissions 1/`0x10000000`). No periodic input
+  updates/events or writable/general shared-memory mappings are implemented.
 
-SuperTux connects/registers `srv:`, then blocks requesting absent **`APT:S`**.
-This remains **before main, graphics and audio**. Next work is genuine applet
-lifecycle, synchronization and requested services, not fabricated availability.
-When FS resource operations are implemented they must use the extracted RomFS
-and common host-filesystem facilities, not the original CIA or NX services.
+Serialized kernel support includes CreateThread (`8`), fixed per-thread priorities,
+ReleaseMutex (`0x14`), Create/Signal/ClearEvent (`0x17`/`0x18`/`0x19`),
+WaitSynchronization1/N (`0x24`/`0x25`), mutex recursion, waiter references and
+priority-ordered event/mutex/arbiter wakeups. Pending thread CPU/TLS/wait state
+is preserved across native dispatch. Only immediate / infinite waits are supported;
+finite nonzero pending deadlines stop before mutation. Timers, time slicing,
+full thread lifecycle and multicore remain unsupported; no host-thread safety
+or hardware-complete scheduler claim is made. With no runnable peers a real
+wait stays BLOCKED, never a fabricated successful return.
+
+SuperTux **reaches and executes main**, then stops at FS OpenFileDirectly.
+See [the exact witness](3DS-SUPERTUX.md). FS resources must use extracted RomFS
+and common filesystem facilities, not mount the CIA or reuse NX services.
 
 ## Tests and reference provenance
 
@@ -95,14 +126,21 @@ and pins unchanged legacy default output. Synthetic CIA pipelines execute real
 SVC/TLS request and blocked-wait paths through offline native AOT.
 
 The optional supplied-title test preserves both earlier CPU reference boundaries
-and adds a third at the APT:S wait. The post-HLE comparisons script selected HLE
+and a third before APT:S lookup handling, then executes the genuine main path. The post-HLE comparisons script selected HLE
 and IPC effects: they validate CPU behavior, **not independently hardware-correct
 kernel/service semantics**. The runtime executes actual C handlers, never that
-script or a CPU interpreter.
+script or a CPU interpreter. `3ds_services` tests both models, APT state/buffer
+preflight, real resources, quotas/rollback, and PTM/HID/FS boundaries.
+`3ds_threads` tests context/TLS preservation, waiter ownership, event/mutex/
+arbiter wakeups, wait-all and no-peer blocking. A native synthetic CIA requires
+its worker to write shared RAM and signal main before main can exit successfully.
 
 Reference facts: Azahar `68202bc4ff7edf9d7280ec0dcd6572b7cd1ae26e`,
 `core/hle/ipc.h`, `kernel/hle_ipc.cpp`, `kernel/svc.cpp`,
-`service/sm/{srv.cpp,sm.h}` and `service/fs/fs_user.cpp` (GPL-2.0-or-later).
+`service/sm/{srv.cpp,sm.h}`, `service/fs/fs_user.cpp`, `service/apt/`,
+`service/hid/`, `kernel/{mutex,event,thread}.cpp` (GPL-2.0-or-later), and libctru's
+APT startup protocol (see its own license). Service policy is a bounded HLE
+personality, not an independently hardware-validated full implementation.
 New C transport/services and generator extension are independent project code
 under GPL-3.0-or-later, retaining the shared SwIPC tool's provenance. No Azahar
 runtime/build dependency or title assets are included.

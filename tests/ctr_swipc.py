@@ -70,6 +70,16 @@ def main():
         generated = (out / 'fixture.swipc.inc').read_text()
         assert 'snx_ctr_ipc_expect(c, 61, 2)' in generated and 'c->out[63]' in generated
         assert 'c->out[64]' not in generated and 'c->in[64]' not in generated
+        handles = ', '.join(f'handle<copy> h{i}' for i in range(61))
+        result = run(f'interface test::Handles {{ [1] Full() -> ({handles}); }}', name='handles61.swipc')
+        assert result.returncode == 0, result.stderr
+        grouped = (out / 'handles61.swipc.inc').read_text()
+        assert 'c->out[2] = 0xf0000000u;' in grouped and 'snx_ctr_ipc_output_handle(c, 63,' in grouped
+        result = run(
+            f'interface test::Handles {{ [1] Full() -> ({handles}, handle<copy> excess); }}', name='handles62.swipc'
+        )
+        assert result.returncode == 1 and 'exceeds 64 command words' in result.stderr
+        assert not list(out.glob('handles62.swipc.*'))
         result = subprocess.run(
             [tool, '--root', str(root), '--out', str(out), 'legacy.swipc', '--ctr'],
             text=True,
@@ -78,7 +88,7 @@ def main():
         )
         assert result.returncode == 1 and '--ctr must precede input files' in result.stderr
     print(
-        'CTR generator: 19 rejected schemas, full 64-word boundaries, mode-order refusal and byte-identical legacy golden passed'
+        'CTR generator: 20 rejected schemas, grouped-handle/64-word boundaries, mode-order refusal and byte-identical legacy golden passed'
     )
 
 

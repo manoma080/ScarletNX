@@ -28,6 +28,11 @@ def main():
     parser.add_argument('--cc', required=True)
     args = parser.parse_args()
     A.catalogue()
+    for condition in range(15):
+        for d, n, m in ((0, 1, 2), (1, 1, 2), (2, 1, 2), (14, 14, 13)):
+            for opcode in (0x06500F90, 0x06800FB0):
+                A.case(condition << 28 | opcode | n << 16 | d << 12 | m, 'packed')
+    A.CASES.append((A.program(0xE6513F92, 0xE0233004, 0xE6815FB2), 'packed'))
     regs = [getattr(R, f'UC_ARM_REG_R{i}') for i in range(13)] + [R.UC_ARM_REG_SP, R.UC_ARM_REG_LR, R.UC_ARM_REG_PC]
     emu = U.Uc(U.UC_ARCH_ARM, U.UC_MODE_ARM)
     emu.ctl_set_cpu_model(R.UC_CPU_ARM_11MPCORE)
@@ -44,6 +49,8 @@ def main():
                 words = A.PROGRAMS[index]
                 for seed in range(32):
                     cpu, memory = A.state(words, seed, group)
+                    if group == 'packed':
+                        cpu.cpsr = (cpu.cpsr & ~0xF0000) | (seed & 15) << 16
                     emu.mem_write(0, bytes(memory))
                     emu.ctl_remove_cache(A.PC, A.PC + 4 * len(words))
                     emu.reg_write(R.UC_ARM_REG_CPSR, cpu.cpsr)

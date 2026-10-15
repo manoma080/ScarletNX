@@ -38,7 +38,7 @@ int main(void) {
     for (unsigned i = 0; i < 128; ++i) put(image.code + 0x1808 + i * 4, 0xef000003);
     for (unsigned i = 0; i < 64; ++i) put(image.code + 0x2000 + i * 4, 0xe1a00000);
     put(image.code + 0x2100, 0xef000003);
-    const uint32_t roots[] = {0x100200, 0x100240, 0x100300, 0x100500, 0x100600, 0x100a01, 0x100b00};
+    const uint32_t roots[] = {0x100200, 0x100240, 0x100300, 0x100500, 0x100600, 0x100a01, 0x100b00, 0x100c00, 0x100f00};
     for (unsigned i = 0; i < sizeof roots / sizeof *roots; ++i) put(image.code + 0x5010 + i * 4, roots[i]);
     put(image.code + 0x200, 0xfa00007e);
     put(image.code + 0x204, 0xef000003); /* immediate BLX -> Thumb */
@@ -60,6 +60,22 @@ int main(void) {
     put(image.code + 0xb00, 0xe1902f9f);
     put(image.code + 0xb04, 0xe1803f91);
     put(image.code + 0xb08, 0xef000003);
+    put(image.code + 0xc00, 0xe3530002); /* unsigned index <= 2 */
+    put(image.code + 0xc04, 0x979ff103); /* LDRLS PC,[PC,R3,LSL#2] */
+    put(image.code + 0xc08, 0xef000003);
+    put(image.code + 0xc0c, 0x100d00);
+    put(image.code + 0xc10, 0x100d20);
+    put(image.code + 0xc14, 0x100d41);
+    put(image.code + 0xc18, 0x100e00); /* outside proven bound: must not seed */
+    put(image.code + 0xd00, 0xef000003);
+    put(image.code + 0xd20, 0xef000003);
+    half(image.code + 0xd40, 0xdf03);
+    put(image.code + 0xe00, 0xef000003);
+    put(image.code + 0xf00, 0xe3520000); /* wrong index register: no table discovery */
+    put(image.code + 0xf04, 0x979ff103);
+    put(image.code + 0xf08, 0xef000003);
+    put(image.code + 0xf0c, 0x100f40);
+    put(image.code + 0xf40, 0xef000003);
     assert(snx_ctr_discover(&image, &p, error, sizeof error));
     assert(p.entries > 128 && p.instructions > p.entries);
     assert(snx_ctr_plan_length(&p, 0x100000, false) == 1);
@@ -77,7 +93,10 @@ int main(void) {
     assert(snx_ctr_plan_length(&p, 0x100600, false) == 2 && snx_ctr_plan_length(&p, 0x100700, true) == 1);
     assert(snx_ctr_plan_length(&p, 0x100800, true) == 1 && snx_ctr_plan_length(&p, 0x100a04, true) == 1);
     assert(snx_ctr_plan_length(&p, 0x100b00, false) == 3); /* reservations do not terminate static discovery */
-    assert(!snx_ctr_plan_length(&p, 0x100008, false));     /* no indiscriminate linear data sweep */
+    assert(snx_ctr_plan_length(&p, 0x100d00, false) == 1 && snx_ctr_plan_length(&p, 0x100d20, false) == 1);
+    assert(snx_ctr_plan_length(&p, 0x100d40, true) == 1);
+    assert(!snx_ctr_plan_length(&p, 0x100e00, false) && !snx_ctr_plan_length(&p, 0x100f40, false));
+    assert(!snx_ctr_plan_length(&p, 0x100008, false)); /* no indiscriminate linear data sweep */
     assert(!snx_ctr_plan_length(&p, 0x100001, false) && !snx_ctr_plan_length(&p, 0xffffffff, true));
     snx_ctr_plan_free(&p);
     assert(!p.arm && !p.thumb && !snx_ctr_plan_length(&p, 0x100000, false));
