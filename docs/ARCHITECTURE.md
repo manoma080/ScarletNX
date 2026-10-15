@@ -14,7 +14,7 @@ Source map: [CLAUDE.md](../CLAUDE.md).
 
 The experimental `src/3ds/` / `scarletnx-3ds` target supplies board profiles,
 decrypted CIA/NCCH/ExeFS/RomFS extraction and an independent checked page-memory
-controller. `SNX_3DS_AOT=ON` adds a native Linux small-image pipeline: fresh
+controller. `SNX_3DS_AOT=ON` adds a native Linux static-AOT pipeline: fresh
 extraction -> separate offline `scarletnx-3ds-aot` LLVM compiler/host linker ->
 native ELF -> checked process/ARM/Thumb dispatch. `snx_ctr_process` maps raw
 ExHeader segments/BSS/stack/TLS; `snx_ctr_native` validates/loads module ABI 1.
@@ -24,10 +24,14 @@ ABI code. Existing host FS/staging/process utilities are reused.
 The shared A32 backend's A57/flat defaults and CPU ABI 2 are unchanged. ARM11 ISA
 and callback memory are explicit codegen options, never global 3DS defines. The
 shared backend CMake target is initialized once when several runtimes request it.
-The initial compiler exhaustively emits one-instruction blocks for every aligned
-ARM/Thumb entry within at most 4 KiB of declared text, including indirect targets;
-there is no runtime discovery or compilation. See [3DS port](3DS.md) for unsupported
-instructions, absent HLE/devices and remaining scalable discovery/cache work.
+The compiler exhaustively emits one-instruction entries for images up to 4 KiB.
+Larger images use bounded offline CFG discovery, code-pointer candidates and a
+bounded PC-relative ADD jump window, with blocks of at most 32 instructions.
+It emits 128 entries per LLVM chunk and links all PIC objects with a separate
+ABI-1 full-geometry index object; unproven targets remain NULL. There is no
+runtime discovery or compilation. SuperTux reaches its first SVC through this
+path, not gameplay. See [3DS port](3DS.md) for coverage limits, absent HLE/devices
+and remaining cache/ISA work.
 
 The common target has no runtime-specific imports. NX and GNU ABI each link
 common and have no dependency on each other. The GNU executable target is

@@ -73,8 +73,10 @@ decrypted application CIA extraction (`scarletnx-3ds -x game.cia`) and an indepe
 page-based memory controller. `SNX_3DS_AOT=ON` additionally enables an experimental
 **extract -> offline AOT -> native run** pipeline on native 64-bit Linux, using an
 explicit ARM11/checked-memory profile without changing shared A57 defaults.
-**Text is initially limited to 4 KiB**; VFP/exclusives, cache/resume, full HLE and
-devices remain incomplete. The default build still stops after extraction.
+Larger images now use bounded chunked static CFG compilation (16 MiB text cap).
+The supplied SuperTux build reaches its first syscall natively, **not gameplay**.
+VFP/exclusives, cache/resume, full HLE and devices remain incomplete. The default
+build still stops after extraction.
 See the [staged 3DS port](docs/3DS.md) for limits, build instructions and remaining work.
 
 For more detailed information please see: [Build + run](./docs/BUILD.md). For the Android app (arm64 and x86_64),

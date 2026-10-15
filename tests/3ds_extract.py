@@ -73,16 +73,17 @@ def main():
         assert (certs / 'certificates.bin').read_bytes() == b'SYNTHETIC-CERTIFICATE'
         assert (certs / 'cia-header.bin').stat().st_size == 0x2020
         trimmed, _ = run(cia(application=ncch(code_blob=code[:0x2004])))
-        assert (trimmed / 'exefs/.code').read_bytes() == code
-        bss_only, _ = run(
-            cia(
-                application=ncch(
-                    code_blob=code[:0x2000], patch_exheader=lambda e: put(e, 0x30, '<4I', 0x300000, 0, 0, 0x1000)
-                )
-            )
-        )
-        assert 'data_pages=0' in (bss_only / 'manifest.ini').read_text()
-
+        assert (trimmed / "exefs/.code").read_bytes() == code
+        bss_only, _ = run(cia(application=ncch(code_blob=code[:0x2000],
+            patch_exheader=lambda e: put(e, 0x30, "<4I", 0x300000, 0, 0, 0x1000))))
+        assert "data_pages=0" in (bss_only / "manifest.ini").read_text()
+        # Homebrew makerom may count BSS in .data bytes, never in .code pages.
+        including_bss, _ = run(cia(application=ncch(code_blob=code[:0x2004],
+            patch_exheader=lambda e: put(e, 0x38, "<I", 0x1004))))
+        assert (including_bss / "exefs/.code").read_bytes() == code
+        run(cia(application=ncch(code_blob=code[:0x2000],
+            patch_exheader=lambda e: put(e, 0x30, "<4I", 0x300000, 0, 0x1000, 0x1000))))
+        run(cia(application=ncch(patch_exheader=lambda e: put(e, 0x38, "<I", 0x2001))), 1, "segment/BSS")
         def empty_icon(e):
             put(e, 28, '<I', 0)
             e[0x1C0:0x1E0] = hashlib.sha256(b'').digest()

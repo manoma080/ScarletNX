@@ -7,9 +7,11 @@
 #define SNX_CTR_MODULE_ABI 1u
 #define SNX_CTR_MODULE_CODEGEN_ABI 1u
 #define SNX_CTR_MODULE_CHECKED_MODE 1u
-/* Initial exhaustive discovery bound, NOT a general title compiler. Every ARM
-   word and Thumb halfword within declared text is compiled before loading. */
-#define SNX_CTR_AOT_TEXT_LIMIT 4096u
+/* Offline compilation bounds, NOT a general title-support guarantee. Tiny
+   images retain exhaustive entries; larger images use conservative static CFG
+   discovery. Uncovered indirect targets remain explicit unsupported exits. */
+#define SNX_CTR_AOT_TEXT_LIMIT (16u * 1024u * 1024u)
+#define SNX_CTR_AOT_EXHAUSTIVE_LIMIT 4096u
 
 typedef struct {
     uint64_t magic;
@@ -25,7 +27,7 @@ typedef struct {
 bool snx_ctr_module_compatible(const SnxCtrModule* module, const SnxCtrImage* image);
 typedef enum { SNX_CTR_RUN_EXIT, SNX_CTR_RUN_FAULT, SNX_CTR_RUN_UNSUPPORTED, SNX_CTR_RUN_BUDGET } SnxCtrRunResult;
 /* Requires a compatible module and its matching freshly initialized process.
-   One-instruction static blocks; no discovery, compiler, interpreter or JIT here.
+   Bounded static blocks; no discovery, compiler, interpreter or JIT here.
    SVC 0x03 stops the process; every other SVC is explicitly unsupported. */
 SnxCtrRunResult snx_ctr_dispatch(const SnxCtrModule* module, SnxCtrProcess* process,
                                 uint64_t limit, uint64_t* executed);

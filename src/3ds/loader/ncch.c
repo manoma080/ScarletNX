@@ -58,8 +58,12 @@ static bool extract_ncch(CtrReader* r, const CtrCia* cia, const char* stage, uns
         *s = (Segment){ctr_le32(p), ctr_le32(p + 4), ctr_le32(p + 8)};
         uint64_t length = (uint64_t)s->pages * 4096;
         uint64_t virtual_length = length + (i == 2 ? ((uint64_t)bss + 4095) / 4096 * 4096 : 0);
-        if (s->bytes > length || (virtual_length && ((s->address & 4095) || s->address < 0x100000 ||
-                                                     !ctr_fits(0x4000000, s->address, virtual_length))))
+        /* Some homebrew makers report .data size INCLUDING BSS, while pages
+           describe only initialized data. Never materialize BSS from .code. */
+        uint64_t initialized = s->bytes;
+        if (i == 2 && initialized > length && initialized >= bss) initialized -= bss;
+        if (initialized > length || (virtual_length && ((s->address & 4095) || s->address < 0x100000 ||
+            !ctr_fits(0x4000000, s->address, virtual_length))))
             return ctr_fail(r, SNX_CTR_EXTRACT_FORMAT, "invalid ExHeader segment/BSS range");
         for (size_t j = 0; virtual_length && j < i; ++j) {
             uint64_t end = (uint64_t)segments[j].address + (uint64_t)segments[j].pages * 4096;
@@ -67,7 +71,7 @@ static bool extract_ncch(CtrReader* r, const CtrCia* cia, const char* stage, uns
             if (segments[j].pages && s->address < end && segments[j].address < this_end)
                 return ctr_fail(r, SNX_CTR_EXTRACT_FORMAT, "overlapping process segments");
         }
-        minimum = expected + s->bytes;
+        minimum = expected + initialized;
         expected += length;
     }
     if (!segments[0].bytes || !segments[0].pages || expected > CTR_CODE_LIMIT || !stack || stack > 0x800000)

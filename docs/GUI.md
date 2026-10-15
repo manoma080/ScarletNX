@@ -35,9 +35,10 @@ build of a detached checkout outside CI says `detached`, and both read `unknown`
   the two options, and another ESC returns to the main menu.
 - **Load 3DS CIA** uses `scarletnx-3ds`. Its `games/` browser lists CIA inputs,
   not host executables. The driver extracts supported decrypted application CIAs.
-  A native Linux build with `SNX_3DS_AOT=ON` then compiles/runs small ARM11 integer
-  images; the default build reports missing AOT support. This is not full title
-  support: text is capped at 4 KiB and HLE/devices remain incomplete. Install the
+  A native Linux build with `SNX_3DS_AOT=ON` then performs static ARM11 integer
+  compilation/execution; the default build reports missing AOT support. Larger
+  images use bounded conservative discovery (16 MiB text cap). SuperTux reaches
+  its first syscall, not gameplay; HLE/devices remain incomplete. Install the
   adjacent `scarletnx-3ds-aot` compiler too. Existing extraction directories are
   refused rather than treated as cache hits. See [3DS port](3DS.md) for limits.
 - **Setup device keys**, immediately after the three load entries, prompts you to

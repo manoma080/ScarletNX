@@ -2,17 +2,20 @@
 <!-- Copyright 2026 the ScarletNX contributors -->
 # Nintendo 3DS port
 
-## Status: stage 1 + stage 2a + stages 2b1/2b2
+## Status: stage 1 + stage 2a + stages 2b1–2b3
 
 `scarletnx-3ds` extracts **decrypted application CIAs**. With `SNX_3DS_AOT=ON`,
-it also performs **extract -> offline static AOT -> native module -> checked
-ARM/Thumb execution** for small integer images. The asset-free end-to-end gate
-passes; this is **not a general 3DS runtime or commercial-title support**.
-Text is initially capped at **4096 bytes**, VFP/exclusives remain unsupported,
-and only SVC 0x03 (ExitProcess) is handled. Stage 2 is still incomplete: scalable
-discovery, full ARM11 semantics and cache/resume remain work. Stages 3–6 remain
-pending. No firmware, keys, game assets, Azahar CPU engine, DSP or PICA renderer
-are included.
+it performs **extract -> offline static AOT -> native module -> checked ARM/Thumb
+execution**. Both asset-free witnesses and the supplied SuperTux CIA's native
+startup gate pass. SuperTux stops at **CreateAddressArbiter (SVC 0x21), before
+`main`**; it is **not playable**, and there is no graphics/audio yet. See the
+[SuperTux integration target](3DS-SUPERTUX.md) for the pinned input and next blockers.
+
+Text is bounded at **16 MiB**, using conservative static CFG discovery for larger
+images. This is not complete indirect-target coverage or a general 3DS runtime.
+VFP/exclusives remain unsupported; only SVC 0x03 (ExitProcess) is handled. Stage 2
+still needs broader discovery/ISA validation and cache/resume. Stages 3–6 remain
+pending. No firmware, keys, title assets or Azahar CPU engine are included.
 
 Implemented:
 
@@ -49,9 +52,16 @@ Implemented:
   `TPIDRURO` points at this page; this is not a thread scheduler or kernel.
 - Optional `scarletnx-3ds-aot`: separate offline LLVM compiler and native host
   linker, private staging/publication, versioned module ABI and exact image
-  identity. Every aligned ARM word and Thumb halfword in declared text gets a
-  one-instruction native block ahead of execution. This bounded exhaustive
-  strategy includes indirect targets without guessing code/data or JIT fallback.
+  identity. Images up to 4096 bytes retain exhaustive one-instruction ARM/Thumb
+  entries. Stage 2b3 adds conservative static CFG discovery for larger images:
+  direct branches/calls, conditional continuations, literal/ADR code pointers,
+  initialized RO/data pointer candidates, legacy Thumb BL pairs and a bounded
+  PC-relative ADD jump window. Blocks contain at most 32 guest instructions;
+  bounded LLVM chunks are disposed between emissions, then statically linked.
+  There is no runtime discovery/compilation. Uncovered targets stop explicitly.
+- Homebrew `.data` byte counts including BSS are accepted only if subtracting
+  BSS fits initialized pages; BSS never becomes required input `.code` bytes.
+  All segment/expansion bounds and content hashes are still checked.
 - Native loader/dispatcher checks ABI, ISA, memory mode, CPU sizes, table counts
   and image identity. It dispatches on PC + CPSR.T, enforces execution permission
   and a block budget, and reports missing entries, faults and unsupported SVCs.
@@ -75,12 +85,15 @@ processes racing parent directory changes.
 `-x`/`--extract` always stops after extraction. Without it, the default build
 (`SNX_3DS_AOT=OFF`) still returns an explicit missing-AOT error. In an AOT-enabled
 build the driver invokes the adjacent compiler, waits for native linking, then
-loads `<extracted>/native/code.so`. `native/code.o` is retained for review.
+loads `<extracted>/native/code.so`. `native/code.o` holds the descriptor/index;
+`native/block-*.o` hold the guest code. All objects are retained for review.
 There is no compilation during dispatch and no reuse of existing extraction or
 native outputs. A failed compile removes private native staging; the successfully
 extracted tree remains. The GUI uses this same driver path, not a separate engine.
 
-`--max-blocks N` selects a 1..10000000 instruction-block budget (default 100000).
+`--max-blocks N` selects a 1..10000000 native-block budget (default 100000).
+A larger-image block may execute up to 32 instructions; this is not a cycle or
+exact instruction budget. Each instruction still checks fetch/identity/permissions.
 `--model old|new` selects RAM backing (default Old), not a different ISA or
 compiler. `--board-info` prints physical regions without allocating RAM.
 `Guest ExitProcess: r0=...` prints a register diagnostic, **not a POSIX guest exit
@@ -118,7 +131,13 @@ covers a versioned domain, full ExHeader and full expanded code. It is not yet a
 complete cache key (CIA/resources, compiler/build/configuration versions and
 resume policy still need a separate design). Initial AOT also requires a
 word-multiple declared text length. Text-page padding beyond declared text has
-no static entry, even if its page is executable. No scheduling, events, service
+no static entry, even if its page is executable. Larger images also have NULL
+slots for unproven indirect targets; these fail explicitly without recompilation.
+The static graph is capped at 524288 discovered instructions and 65536 entries;
+exceeding either aborts compilation, never silently truncates the graph. Objects
+together are capped at 256 MiB and the linked module at 512 MiB. Tiny-image code
+uses O2; larger-image chunks use O1, with 128 entries per LLVM module.
+No scheduling, events, service
 IPC, resource mappings, handles or device support are implied by the initial
 private TLS/stack setup.
 
@@ -167,6 +186,11 @@ that compiler must remain installed at the configured path. Install both
 this opt-in configuration rather than substituting another execution engine.
 The runtime/module need no LLVM shared library; only the offline compiler does.
 Use both `SNX_3DS_AOT=ON` and `SNX_TEST_ARM_AOT=ON` for pipeline plus CPU tests.
+The bounded CFG unit test needs no LLVM. To run the optional external SuperTux
+bootstrap gate, set `SNX_TEST_3DS_SUPERTUX=/absolute/path/to/Supertux.cia`.
+`SNX_TEST_ARM_DIFF=ON` additionally compares its first-SVC GPR/CPSR and complete
+data/stack/TLS snapshots against pinned Unicorn ARM11 MPCore (test-only oracle,
+never a runtime engine). No sample binaries are downloaded or distributed.
 
 ## Source provenance and licensing
 
@@ -203,7 +227,7 @@ user-mode API still uses a single flat `mem`/`mem_size` range.
 Mapping a sparse 3DS address space into that ABI would make holes accessible and
 would bypass process permissions, aliases and device callbacks.
 
-Remaining requirements beyond the small-image pipeline:
+Remaining requirements beyond the initial native bootstrap pipeline:
 
 1. The initial ARM11 integer profile is implemented. Complete VFPv2 (including
    short-vector FPSCR behavior), missing ARMv6K instructions and alignment-mode
@@ -213,10 +237,11 @@ Remaining requirements beyond the small-image pipeline:
    transfers. Complete architectural reservation monitors/exclusives: these
    currently stop as unsupported, as do VFP/vector transfers and checked Thumb
    table branches. Do not pass an A64 `CPU*` or an NX module to an A32 block.
-3. Module ABI 1 and bounded exhaustive static ARM/Thumb discovery/dispatch are
-   implemented. Replace the 4 KiB exhaustive strategy with scalable discovery/
-   chunking and coverage policy, preserving indirect-target and execute checks.
-   Add validated resume/cache and scheduling. No silent interpreter/runtime JIT.
+3. Module ABI 1 supports exhaustive tiny images and bounded conservative CFG
+   discovery/chunking for larger images. Its full-geometry pointer tables permit
+   NULL slots; the ABI and CPU layouts are unchanged. Improve computed-target
+   coverage beyond the current pointer heuristics and 128-word PC-relative ADD
+   window. Add validated resume/cache and scheduling. No interpreter/runtime JIT.
 4. Keep all CTR code under `src/3ds/`, with only `common` dependencies. Extract
    reusable host FS/tree operations from NX into common rather than linking the
    NX kernel/services/Maxwell runtime into CTR. Keep 3DS archive IDs, permissions,
@@ -232,8 +257,8 @@ options; shared A57 emission and CPU ABI defaults remain unchanged.
 
 The tick domain remains 268,111,856 Hz, with 4,481,136 base ticks per frame, as
 in Azahar. New 3DS CPU scaling is a separate future scheduler concern. There is
-still no interrupt scheduling, ARM9 emulation or boot ROM. Synthetic small CIAs
-now execute natively, not complete retail titles.
+still no interrupt scheduling, ARM9 emulation or boot ROM. Synthetic CIAs and
+the supplied SuperTux startup execute natively, not complete games/retail titles.
 
 ## Staged roadmap (2a implemented; 2b partially implemented)
 
@@ -247,7 +272,9 @@ The extraction and independent memory-controller subset is implemented as 2a.
 Stage 2b1 supplies ARM11 integer profile selection and checked-memory integration.
 Stage 2b2 adds module ABI/loading, bounded exhaustive ARM/Thumb static dispatch,
 ExHeader process/stack/TLS setup and the asset-free extract/AOT/run witness.
-**Stage 2 is not complete**: scalable discovery beyond 4 KiB, full VFP/exclusives,
+Stage 2b3 removes the tiny-image restriction with bounded chunked static CFG
+compilation and passes the external SuperTux first-SVC native bootstrap gate.
+**Stage 2 is not complete**: broader discovery/ISA coverage, full VFP/exclusives,
 validated resume/cache and wider runtime validation remain pending.
 
 Reference Azahar `src/core/file_sys/{cia_container,ticket,title_metadata,

@@ -45,7 +45,10 @@ bool snx_ctr_image_load(const char* directory, SnxCtrImage* image, char* error, 
         *s = (SnxCtrSegment){le32(p), le32(p + 4), le32(p + 8)};
         uint64_t bytes = (uint64_t)s->pages * 4096;
         sizes[i] = bytes + (i == 2 ? ((uint64_t)image->bss_size + 4095) & ~UINT64_C(4095) : 0);
-        if (s->bytes > bytes || (sizes[i] && ((s->address & 4095) || s->address < 0x100000 ||
+        /* Match extraction: some homebrew .data byte counts include BSS. */
+        uint64_t initialized = s->bytes;
+        if (i == 2 && initialized > bytes && initialized >= image->bss_size) initialized -= image->bss_size;
+        if (initialized > bytes || (sizes[i] && ((s->address & 4095) || s->address < 0x100000 ||
             (uint64_t)s->address + sizes[i] > 0x4000000))) goto fail;
         for (unsigned j = 0; j < i; ++j)
             if (sizes[i] && sizes[j] && s->address < (uint64_t)image->segment[j].address + sizes[j] &&

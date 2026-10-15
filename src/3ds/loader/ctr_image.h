@@ -5,6 +5,8 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+/* Raw ExHeader values: .data bytes may include BSS in homebrew images.
+   pages describe initialized page-packed .code; do not copy bytes blindly. */
 typedef struct { uint32_t address, pages, bytes; } SnxCtrSegment;
 typedef struct {
     SnxCtrSegment segment[3]; /* text, read-only, data; file offsets are page-packed */

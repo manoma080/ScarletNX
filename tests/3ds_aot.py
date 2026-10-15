@@ -13,18 +13,24 @@ import tempfile
 from ctr_fixtures import cia, ncch, put
 
 
-def application(words=None, raw=None, text_size=None, large=False):
-    code = bytearray(0x4000 if large else 0x3000)
+def application(words=None, raw=None, text_size=None, ro=None):
     if raw is None:
         raw = struct.pack('<' + 'I' * len(words), *words)
+    size = text_size if text_size is not None else len(raw)
+    pages = (size + 4095) // 4096
+    code = bytearray((pages + 2) * 4096)
     code[:len(raw)] = raw
-    code[0x1000:0x1010] = b'READONLY-DATA!!!'
-    code[0x2000:0x2004] = b'DATA'
+    at = pages * 4096
+    code[at:at + 16] = b'READONLY-DATA!!!'
+    if ro is not None:
+        code[at:at + len(ro)] = ro
+    code[at + 4096:at + 4100] = b'DATA'
 
     def header(ex):
-        put(ex, 0x18, '<I', text_size if text_size is not None else len(raw))
-        if large:
-            put(ex, 0x14, '<I', 2)
+        put(ex, 0x14, '<II', pages, size)
+        if size > 0x100000:
+            put(ex, 0x20, '<I', 0x2000000)
+            put(ex, 0x30, '<I', 0x3000000)
     return cia(application=ncch(code_blob=bytes(code), patch_exheader=header))
 
 
@@ -112,7 +118,25 @@ def main():
         put(maximum, 0, '<I', 0xea0003fd)
         put(maximum, 4092, '<I', 0xef000003)
         run(application(raw=bytes(maximum)), message='Guest ExitProcess: r0=0 blocks=2')
-        too_large, _ = run(application([0xef000003], text_size=4100, large=True), 3, 'compiler failed')
+        run(application([0xef000003], text_size=4100), message='Guest ExitProcess: r0=0 blocks=1')
+        # Sparse RO function pointer -> indirect BLX -> Thumb, beyond the old cap.
+        sparse = bytearray(0x2010)
+        put(sparse, 0, '<6I', 0xe59f300c, 0xe5933000, 0xe12fff33, 0xef000003, 0xe1a00000, 0x200000)
+        put(sparse, 0x2000, '<HH', 0x202f, 0x4770)
+        run(application(raw=sparse, ro=struct.pack('<I', 0x102001)), message='Guest ExitProcess: r0=47 blocks=3')
+        # More than 128 block entries forces multiple independent LLVM chunks.
+        chained = bytearray(0x1800)
+        for i in range(129):
+            put(chained, i * 32, '<I', 0xea000006)
+        put(chained, 129 * 32, '<II', 0xe3a00031, 0xef000003)
+        chain, _ = run(application(raw=chained), message='Guest ExitProcess: r0=49 blocks=130')
+        assert len(list((chain / 'native').glob('block-*.o'))) >= 2
+        # Unproven dynamic targets do not trigger discovery/compilation at run time.
+        uncovered = bytearray(0x1800)
+        put(uncovered, 0, '<3I', 0xe3a01601, 0xe2811c01, 0xe12fff11)
+        put(uncovered, 0x100, '<I', 0xef000003)
+        run(application(raw=uncovered), 3, 'missing static entry')
+        too_large, _ = run(application([0xef000003], text_size=16 * 1024 * 1024 + 4), 3, 'compiler failed')
         assert not (too_large / 'native').exists()
         extracted, text = run(application([0xe3a0002a, 0xef000003]), message='Extracted', extra=('-x',))
         assert 'Running ARM11' not in text and not (extracted / 'native').exists()

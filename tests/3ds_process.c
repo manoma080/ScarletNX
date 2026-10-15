@@ -97,6 +97,13 @@ int main(void) {
     assert(!snx_write_file(manifest, "arbitrary invalid metadata", 26));
     assert(snx_ctr_image_load(root, &other, error, sizeof error));
     assert(!memcmp(image.identity, other.identity, 32)); snx_ctr_image_free(&other);
+    /* Real makerom homebrew can include BSS in .data's byte count. */
+    put(ex + 0x38, 0x1004); assert(!snx_write_file(ex_path, ex, sizeof ex));
+    assert(snx_ctr_image_load(root, &other, error, sizeof error));
+    assert(other.segment[2].bytes == 0x1004 && other.code_size == image.code_size);
+    SnxCtrProcess* makerom = snx_ctr_process_new(&other, SNX_CTR_OLD); assert(makerom);
+    snx_ctr_process_free(makerom); snx_ctr_image_free(&other);
+    put(ex + 0x38, 4); assert(!snx_write_file(ex_path, ex, sizeof ex));
     code[0] ^= 1; assert(!snx_write_file(code_path, code, sizeof code));
     assert(snx_ctr_image_load(root, &other, error, sizeof error));
     assert(!snx_ctr_module_compatible(&m, &other)); snx_ctr_image_free(&other);
@@ -114,7 +121,7 @@ int main(void) {
     put(ex + 0x3c, 0x1000); assert(!snx_write_file(ex_path, ex, sizeof ex));
     const uint32_t malformed[][2] = {{0x10, 0x100001}, {0x14, UINT32_MAX}, {0x18, 1},
         {0x18, 4097}, {0x1c, 0}, {0x1c, 0x800001}, {0x20, 0x100000}, {0x30, 0x3fff000},
-        {0x38, 4097}, {0x3c, UINT32_MAX}};
+        {0x38, 8193}, {0x3c, UINT32_MAX}};
     for (unsigned i = 0; i < sizeof malformed / sizeof *malformed; ++i) {
         unsigned char changed[sizeof ex]; memcpy(changed, ex, sizeof ex);
         put(changed + malformed[i][0], malformed[i][1]);
