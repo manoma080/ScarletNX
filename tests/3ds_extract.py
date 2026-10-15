@@ -16,7 +16,7 @@ from ctr_fixtures import TITLE, NONE, cia, ncch, put
 
 def main():
     driver = str(Path(sys.argv[1]).resolve())
-    aot_enabled = "--aot" in sys.argv[2:]
+    aot_enabled = '--aot' in sys.argv[2:]
     cases = 0
     with tempfile.TemporaryDirectory(prefix='snx-ctr-extract-') as temp:
         root = Path(temp)
@@ -73,28 +73,45 @@ def main():
         assert (certs / 'certificates.bin').read_bytes() == b'SYNTHETIC-CERTIFICATE'
         assert (certs / 'cia-header.bin').stat().st_size == 0x2020
         trimmed, _ = run(cia(application=ncch(code_blob=code[:0x2004])))
-        assert (trimmed / "exefs/.code").read_bytes() == code
-        bss_only, _ = run(cia(application=ncch(code_blob=code[:0x2000],
-            patch_exheader=lambda e: put(e, 0x30, "<4I", 0x300000, 0, 0, 0x1000))))
-        assert "data_pages=0" in (bss_only / "manifest.ini").read_text()
+        assert (trimmed / 'exefs/.code').read_bytes() == code
+        bss_only, _ = run(
+            cia(
+                application=ncch(
+                    code_blob=code[:0x2000], patch_exheader=lambda e: put(e, 0x30, '<4I', 0x300000, 0, 0, 0x1000)
+                )
+            )
+        )
+        assert 'data_pages=0' in (bss_only / 'manifest.ini').read_text()
         # Homebrew makerom may count BSS in .data bytes, never in .code pages.
-        including_bss, _ = run(cia(application=ncch(code_blob=code[:0x2004],
-            patch_exheader=lambda e: put(e, 0x38, "<I", 0x1004))))
-        assert (including_bss / "exefs/.code").read_bytes() == code
-        run(cia(application=ncch(code_blob=code[:0x2000],
-            patch_exheader=lambda e: put(e, 0x30, "<4I", 0x300000, 0, 0x1000, 0x1000))))
-        run(cia(application=ncch(patch_exheader=lambda e: put(e, 0x38, "<I", 0x2001))), 1, "segment/BSS")
+        including_bss, _ = run(
+            cia(application=ncch(code_blob=code[:0x2004], patch_exheader=lambda e: put(e, 0x38, '<I', 0x1004)))
+        )
+        assert (including_bss / 'exefs/.code').read_bytes() == code
+        run(
+            cia(
+                application=ncch(
+                    code_blob=code[:0x2000], patch_exheader=lambda e: put(e, 0x30, '<4I', 0x300000, 0, 0x1000, 0x1000)
+                )
+            )
+        )
+        run(cia(application=ncch(patch_exheader=lambda e: put(e, 0x38, '<I', 0x2001))), 1, 'segment/BSS')
+
         def empty_icon(e):
             put(e, 28, '<I', 0)
             e[0x1C0:0x1E0] = hashlib.sha256(b'').digest()
 
         empty, _ = run(cia(application=ncch(patch_exefs=empty_icon)))
         assert (empty / 'exefs/icon').read_bytes() == b''
-        # Default path is content addressed; extraction succeeds but execution is not claimed.
-        _, text = run(plain, 3, 'static compilation/execution is not implemented', explicit=False)
+        # Default path is content addressed. Only the opt-in AOT build runs it.
+        _, text = run(
+            plain,
+            0 if aot_enabled else 3,
+            'Guest ExitProcess: r0=42' if aot_enabled else 'static compilation/execution is not implemented',
+            explicit=False,
+        )
         expected = root / 'work/3ds' / f'{TITLE:016x}-{hashlib.sha256(plain).hexdigest()}'
         assert expected.is_dir() and str(expected) in text
-        # Requested extraction alone may succeed without a runtime; normal launches stop before AOT.
+        # Extraction-only format/crypto checks are independent of the AOT option.
         run(cia(encrypted=True), 3, 'encrypted CIA')
         run(cia(application=ncch(encrypted=True)), 3, 'encrypted NCCH')
         run(cia(title=0x0004000E01234500), 3, 'updates/DLC/system')

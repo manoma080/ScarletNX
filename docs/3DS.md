@@ -34,7 +34,8 @@ Implemented:
   directory/file traversal cycles, overlaps, duplicate paths and excessive expansion are rejected.
 - Shared NX host utilities (`common` filesystem paths, file IO, private staging,
   cleanup, publication) are reused; the NX kernel/NSO loader/FS service are not
-  linked. Shared SHA-256 now also supports incremental hashing.
+  linked. Container/content hashes and version-1 image identities use OpenSSL
+  EVP SHA-256, with incremental hashing for streamed data; no custom SHA is used.
 - `src/3ds/memory/ctr_memory.h`: independent page-based address spaces, shared
   physical RAM/VRAM/DSP backings, aliases, R/W/X checks, checked cross-page RAM
   transfers and explicit aligned MMIO callbacks. Failed map/protect/unmap and

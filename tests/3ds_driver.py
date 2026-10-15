@@ -17,8 +17,11 @@ def main():
         assert p.returncode == status, (args, p.returncode, output)
         assert contains in output, (args, output)
         assert 'ScarletNX - ' not in output, output  # no false launch/completion banner
+        return output
 
-    run(['--help'], 0, 'Stage 2a')
+    help_text = run(['--help'], 0, 'Stage 2a')
+    assert ('Static ARM11 AOT enabled:' in help_text) != ('ARM11 pipeline disabled' in help_text)
+    assert 'static compilation/execution and encrypted content are not implemented' not in help_text
     run(['--output'], 2, 'requires a directory')
     run(['--board-info', '-x'], 2, 'Usage:')
     run([], 2, 'Usage:')

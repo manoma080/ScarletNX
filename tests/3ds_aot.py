@@ -4,6 +4,7 @@
 """Asset-free CIA -> extracted tree -> native ELF -> checked ARM/Thumb execution."""
 
 import ctypes as C
+import hashlib
 from pathlib import Path
 import shutil
 import struct
@@ -251,6 +252,12 @@ def main():
         original = (basic / 'native/code.so').read_bytes()
         offset = descriptor_offset(original)
         assert C.sizeof(Descriptor) == 112
+        identity = hashlib.sha256(
+            b'ScarletNX CTR image identity v1\0'
+            + (basic / 'exheader.bin').read_bytes()
+            + (basic / 'exefs/.code').read_bytes()
+        ).digest()
+        assert original[offset + Descriptor.identity.offset : offset + Descriptor.identity.offset + 32] == identity
         mutations = [offset, offset + Descriptor.identity.offset + 31]
         mutations += [offset + Descriptor.fields.offset + i * 4 for i in range(14)]
         for i, at in enumerate(mutations):

@@ -2,7 +2,7 @@
    Copyright 2026 the ScarletNX contributors */
 #include "ctr_image.h"
 #include "common.h"
-#include "sha256.h"
+#include <openssl/evp.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -20,7 +20,10 @@ static bool read_exact(const char* root, const char* name, void* out, size_t siz
     return ok;
 }
 void snx_ctr_image_free(SnxCtrImage* image) {
-    if (image) { free(image->code); memset(image, 0, sizeof *image); }
+    if (image) {
+        free(image->code);
+        memset(image, 0, sizeof *image);
+    }
 }
 bool snx_ctr_image_load(const char* directory, SnxCtrImage* image, char* error, size_t error_size) {
     if (error_size) error[0] = 0;
@@ -48,26 +51,32 @@ bool snx_ctr_image_load(const char* directory, SnxCtrImage* image, char* error, 
         /* Match extraction: some homebrew .data byte counts include BSS. */
         uint64_t initialized = s->bytes;
         if (i == 2 && initialized > bytes && initialized >= image->bss_size) initialized -= image->bss_size;
-        if (initialized > bytes || (sizes[i] && ((s->address & 4095) || s->address < 0x100000 ||
-            (uint64_t)s->address + sizes[i] > 0x4000000))) goto fail;
+        if (initialized > bytes ||
+            (sizes[i] && ((s->address & 4095) || s->address < 0x100000 || (uint64_t)s->address + sizes[i] > 0x4000000)))
+            goto fail;
         for (unsigned j = 0; j < i; ++j)
             if (sizes[i] && sizes[j] && s->address < (uint64_t)image->segment[j].address + sizes[j] &&
-                image->segment[j].address < (uint64_t)s->address + sizes[i]) goto fail;
+                image->segment[j].address < (uint64_t)s->address + sizes[i])
+                goto fail;
         total += bytes;
     }
-    if (!image->segment[0].bytes || (image->segment[0].bytes & 3) || total > 0x4000000 ||
-        !image->stack_size || image->stack_size > 0x800000) goto fail;
+    if (!image->segment[0].bytes || (image->segment[0].bytes & 3) || total > 0x4000000 || !image->stack_size ||
+        image->stack_size > 0x800000)
+        goto fail;
     image->code_size = (size_t)total;
     image->code = malloc(image->code_size);
     reason = "cannot read exact bounded expanded .code";
     if (!image->code || !read_exact(directory, "exefs/.code", image->code, image->code_size)) goto fail;
-    SnxSha256 hash;
     static const char domain[] = "ScarletNX CTR image identity v1";
-    snx_sha256_init(&hash);
-    snx_sha256_update(&hash, domain, sizeof domain);
-    snx_sha256_update(&hash, ex, sizeof ex);
-    snx_sha256_update(&hash, image->code, image->code_size);
-    snx_sha256_final(&hash, image->identity);
+    EVP_MD_CTX* hash = EVP_MD_CTX_new();
+    unsigned length = 0;
+    bool hashed = hash && EVP_DigestInit_ex(hash, EVP_sha256(), NULL) == 1 &&
+                  EVP_DigestUpdate(hash, domain, sizeof domain) == 1 && EVP_DigestUpdate(hash, ex, sizeof ex) == 1 &&
+                  EVP_DigestUpdate(hash, image->code, image->code_size) == 1 &&
+                  EVP_DigestFinal_ex(hash, image->identity, &length) == 1 && length == sizeof image->identity;
+    EVP_MD_CTX_free(hash);
+    reason = "cannot hash extracted image with OpenSSL";
+    if (!hashed) goto fail;
     return true;
 fail:
     if (error_size) snprintf(error, error_size, "%s", reason);

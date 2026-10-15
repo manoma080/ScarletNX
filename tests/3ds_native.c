@@ -3,7 +3,7 @@
 #include "aot/ctr_module.h"
 #include "common.h"
 #include "kernel/ctr_kernel.h"
-#include "sha256.h"
+#include <openssl/evp.h>
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -18,7 +18,8 @@ static void snapshot(SnxCtrAddressSpace* space, const char* name, uint32_t va, u
     unsigned char hash[32];
     assert(bytes);
     assert(snx_ctr_read(space, va, bytes, size) == SNX_CTR_MEM_OK);
-    snx_sha256(bytes, size, hash);
+    unsigned length = 0;
+    assert(EVP_Digest(bytes, size, hash, &length, EVP_sha256(), NULL) == 1 && length == sizeof hash);
     free(bytes);
     printf("%s=", name);
     for (unsigned i = 0; i < 32; ++i) printf("%02x", hash[i]);
