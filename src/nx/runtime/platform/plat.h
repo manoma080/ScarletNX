@@ -7,6 +7,7 @@
 #ifndef SNX_PLAT_H
 #define SNX_PLAT_H
 #include "cpu/aarch64/cpu.h"
+#include "filesystem/host.h"
 #include <stddef.h>
 #include <stdio.h>
 
@@ -19,26 +20,14 @@
 #endif
 #include <windows.h>
 typedef struct {
-    SRWLOCK l;
-} PMutex;
-#define PMUTEX_INIT {SRWLOCK_INIT}
-typedef struct {
     CONDITION_VARIABLE c;
 } PCond;
 #else
 #include <pthread.h>
 typedef struct {
-    pthread_mutex_t l;
-} PMutex;
-#define PMUTEX_INIT {PTHREAD_MUTEX_INITIALIZER}
-typedef struct {
     pthread_cond_t c;
 } PCond;
 #endif
-void pm_init(PMutex* m); /* or PMUTEX_INIT, for a static lock that must work before any init runs */
-void pm_lock(PMutex* m);
-void pm_unlock(PMutex* m);
-int pm_trylock(PMutex* m); /* 1 when it took the lock, 0 when another thread holds it */
 void pc_init(PCond* c);
 void pc_signal(PCond* c);
 void pc_broadcast(PCond* c);
@@ -75,7 +64,6 @@ void plat_vm_decommit(u8* p, u64 size);
 void* plat_dl_open(const char* path);
 void* plat_dl_sym(void* h, const char* name);
 const char* plat_dl_error(void); /* why the last plat_dl_open or plat_dl_sym failed */
-int plat_mkdir(const char* path);
 int plat_is_dir(const char* path);
 typedef struct {
     void* h;
@@ -103,8 +91,6 @@ void plat_file_unmap(PFileMap* m);
    section, shared by nature), so its pages are the host's page cache, shared by every running instance and read only
    when touched. size is the indexed length; an empty file keeps its fd with data NULL. 0, or -1 with *fd -1 when it
    can't be opened or mapped, or when keeping it open would leave too few descriptors for the files opened on demand */
-int plat_file_share(const char* path, u64 size, int* fd, const u8** data);
-void plat_file_unshare(int fd, const u8* data, u64 size);
 /* replaces dst with tmp in one step (rename), so a reader never sees dst missing or half written. On failure dst is
    kept and tmp removed */
 int plat_replace_file(const char* tmp, const char* dst);

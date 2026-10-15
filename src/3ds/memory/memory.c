@@ -140,6 +140,22 @@ static unsigned char* physical(SnxCtrMemory* m, uint32_t pa, bool* mmio) {
     *mmio = true; /* only reachable for an internally corrupted PTE */
     return NULL;
 }
+SnxCtrMemResult snx_ctr_check_ram(SnxCtrAddressSpace* s, uint32_t va, size_t size, unsigned access) {
+    if (!s || !access || !permissions_valid(access) || size > UINT64_C(0x100000000) - va) return SNX_CTR_MEM_INVALID;
+    for (size_t off = 0; off < size;) {
+        uint32_t at = va + (uint32_t)off;
+        Page* p = page(s, at);
+        if (!p || !p->present) return SNX_CTR_MEM_UNMAPPED;
+        if ((p->permissions & access) != access) return SNX_CTR_MEM_PERMISSION;
+        bool mmio;
+        (void)physical(s->memory, p->pa, &mmio);
+        if (mmio) return SNX_CTR_MEM_DEVICE;
+        size_t n = 4096 - (at & 4095);
+        if (n > size - off) n = size - off;
+        off += n;
+    }
+    return SNX_CTR_MEM_OK;
+}
 static SnxCtrMemResult transfer(SnxCtrAddressSpace* s, uint32_t va, void* buffer, size_t size, unsigned access,
                                 bool ram_only) {
     if (!s || !buffer || !size || size > UINT64_C(0x100000000) - va) return SNX_CTR_MEM_INVALID;

@@ -113,10 +113,6 @@ int plat_text_input(char* out, size_t cap, const char* initial) {
     }
     return d.result;
 }
-void pm_init(PMutex* m) { InitializeSRWLock(&m->l); }
-void pm_lock(PMutex* m) { AcquireSRWLockExclusive(&m->l); }
-void pm_unlock(PMutex* m) { ReleaseSRWLockExclusive(&m->l); }
-int pm_trylock(PMutex* m) { return TryAcquireSRWLockExclusive(&m->l) != 0; }
 void pc_init(PCond* c) { InitializeConditionVariable(&c->c); }
 void pc_signal(PCond* c) { WakeConditionVariable(&c->c); }
 void pc_broadcast(PCond* c) { WakeAllConditionVariable(&c->c); }
@@ -276,7 +272,6 @@ const char* plat_dl_error(void) {
     snprintf(buf, sizeof buf, "%s (error %lu)", m[0] ? m : "unknown error", (unsigned long)e);
     return buf;
 }
-int plat_mkdir(const char* p) { return CreateDirectoryA(p, NULL) ? 0 : -1; }
 int plat_is_dir(const char* p) {
     DWORD a = GetFileAttributesA(p);
     return a != INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_DIRECTORY);
@@ -335,23 +330,11 @@ i64 plat_pread(FILE* f, void* buf, u64 size, u64 off) {
     }
     return (i64)got;
 }
-/* paths are UTF-8 throughout (the manifest's activeCodePage makes the A functions take it too): the wide form for
-   the W functions, NULL when it isn't valid UTF-8. The caller frees it */
-static wchar_t* wpath(const char* s) {
-    int n = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, s, -1, NULL, 0);
-    if (n <= 0) return NULL;
-    wchar_t* w = malloc((size_t)n * sizeof *w);
-    if (w && !MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, s, -1, w, n)) {
-        free(w);
-        w = NULL;
-    }
-    return w;
-}
 static int file_map(PFileMap* m, const char* path, const u64* indexed_size) {
     m->data = NULL;
     m->size = 0;
     if (indexed_size && (*indexed_size > SIZE_MAX || *indexed_size > INT64_MAX)) return -1;
-    wchar_t* w = wpath(path);
+    wchar_t* w = snx_host_wpath(path);
     if (!w) return -1;
     /* a directory doesn't open without FILE_FLAG_BACKUP_SEMANTICS, so this is a regular file */
     HANDLE f = CreateFileW(w, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_DELETE, NULL, OPEN_EXISTING,
@@ -395,51 +378,9 @@ void plat_file_unmap(PFileMap* m) {
     m->size = 0;
     m->borrowed = 0;
 }
-/* The CRT's descriptor table holds 8192 (_NHANDLE_), and descriptors are handed out lowest first: leave room for
-   everything opened on demand */
-#define SHARE_FD_MAX     8192
-#define SHARE_FD_RESERVE 256
-int plat_file_share(const char* path, u64 size, int* fd, const u8** data) {
-    *fd = -1;
-    *data = NULL;
-    if (size > SIZE_MAX || size > INT64_MAX) return -1;
-    wchar_t* w = wpath(path);
-    if (!w) return -1;
-    HANDLE f = CreateFileW(w, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_DELETE, NULL, OPEN_EXISTING,
-                           FILE_ATTRIBUTE_NORMAL, NULL);
-    free(w);
-    if (f == INVALID_HANDLE_VALUE) return -1;
-    void* p = NULL;
-    if (size) { /* a section is shared by every process that maps the file, and reads a page when it is touched */
-        HANDLE mp = CreateFileMappingW(f, NULL, PAGE_READONLY, (DWORD)(size >> 32), (DWORD)size, NULL);
-        p = mp ? MapViewOfFile(mp, FILE_MAP_READ, 0, 0, (SIZE_T)size) : NULL;
-        if (mp) CloseHandle(mp); /* the view keeps the mapping */
-        if (!p) {
-            CloseHandle(f);
-            return -1;
-        }
-    }
-    int d = _open_osfhandle((intptr_t)f, _O_RDONLY | _O_BINARY); /* owns f from here */
-    if (d < 0 || d + SHARE_FD_RESERVE >= SHARE_FD_MAX) {
-        if (p) UnmapViewOfFile(p);
-        if (d < 0)
-            CloseHandle(f);
-        else
-            _close(d);
-        return -1;
-    }
-    *fd = d;
-    *data = p;
-    return 0;
-}
-void plat_file_unshare(int fd, const u8* data, u64 size) {
-    (void)size;
-    if (data) UnmapViewOfFile(data);
-    if (fd >= 0) _close(fd);
-}
 /* rename fails on Windows when dst exists, and a remove first loses dst if the process dies in between */
 int plat_replace_file(const char* tmp, const char* dst) {
-    wchar_t *wt = wpath(tmp), *wd = wpath(dst);
+    wchar_t *wt = snx_host_wpath(tmp), *wd = snx_host_wpath(dst);
     int ok = wt && wd && MoveFileExW(wt, wd, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
     if (!ok) remove(tmp);
     free(wt);

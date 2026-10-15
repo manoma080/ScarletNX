@@ -657,9 +657,9 @@ static void miscellaneous(ArmIR* a, SnxA32Kind kind) {
 static int instruction(ArmIR* a, SnxA32Kind kind) {
     uint32_t w = a->word;
     unsigned d = (w >> 12) & 15;
-    if ((a->profile == SNX_ARM_PROFILE_ARM11 && kind == SNX_A32_VECTOR) ||
-        (a->memory == SNX_ARM_MEMORY_CHECKED && (kind == SNX_A32_VECTOR || kind == SNX_A32_ACQUIRE_RELEASE ||
-                                                 (kind == SNX_A32_EXCLUSIVE && a->profile != SNX_ARM_PROFILE_ARM11)))) {
+    if (a->memory == SNX_ARM_MEMORY_CHECKED &&
+        ((kind == SNX_A32_VECTOR && a->profile != SNX_ARM_PROFILE_ARM11) || kind == SNX_A32_ACQUIRE_RELEASE ||
+         (kind == SNX_A32_EXCLUSIVE && a->profile != SNX_ARM_PROFILE_ARM11))) {
         trap(a, SNX_ARM_BACKEND_UNSUPPORTED, c32(a, w));
         return 1;
     }

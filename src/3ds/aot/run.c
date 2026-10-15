@@ -42,6 +42,10 @@ int snx_ctr_aot_run(const char* driver, const char* directory, SnxCtrModel model
         snprintf(error, error_size, "cannot create checked ARM11 process mappings");
         goto done;
     }
+    if (!snx_ctr_process_mount_fs(process, directory)) {
+        snprintf(error, error_size, "cannot index extracted title filesystem");
+        goto done;
+    }
     uint64_t executed;
     printf("Running ARM11 static AOT\n");
     SnxCtrRunResult state = snx_ctr_dispatch(native.module, process, limit, &executed);

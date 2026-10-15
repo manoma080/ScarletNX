@@ -8,6 +8,7 @@
 #include "runtime/internal.h"
 #include <stdlib.h>
 #include <string.h>
+#include "common.h"
 
 #define OK                  0u
 #define INVALID_HANDLE      0xd8e007f7u
@@ -415,6 +416,14 @@ SnxCtrSvcResult snx_ctr_svc(SnxCtrProcess* p, uint32_t number) {
             uint32_t id = snx_ctr_handle_object(p, r[1]), out = 0;
             r[0] = id ? snx_ctr_handle_add(p, id, &out) : INVALID_HANDLE;
             r[1] = out;
+            return SNX_CTR_SVC_RETURN;
+        }
+        case 0x28: {
+            double elapsed = snx_seconds() - p->clock_origin;
+            if (!(elapsed >= 0 && elapsed < 0x1p64 / 268111856.0)) return SNX_CTR_SVC_UNSUPPORTED;
+            uint64_t ticks = (uint64_t)(elapsed * 268111856.0);
+            r[0] = (uint32_t)ticks;
+            r[1] = (uint32_t)(ticks >> 32);
             return SNX_CTR_SVC_RETURN;
         }
         case 0x2a: {

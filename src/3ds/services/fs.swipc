@@ -3,4 +3,5 @@
 interface snx::ctr::fs_wire is fs:USER {
     [0x801] Initialize(pid process);
     [0x861] InitializeWithSdkVersion(u32 version, pid process);
+    [0x80e] CloseArchive(u64 archive);
 }

@@ -50,6 +50,8 @@ SnxCtrMemResult snx_ctr_write(SnxCtrAddressSpace* space, uint32_t va, const void
 SnxCtrMemResult snx_ctr_fetch(SnxCtrAddressSpace* space, uint32_t va, void* output, size_t size);
 /* Whole-instruction multiword transfers: reject any MMIO before side effects,
    rather than collapsing LDM/STM or paired accesses into one device access. */
+/* No-copy full-range RAM preflight, including all requested permissions. */
+SnxCtrMemResult snx_ctr_check_ram(SnxCtrAddressSpace* space, uint32_t va, size_t size, unsigned permissions);
 SnxCtrMemResult snx_ctr_read_ram(SnxCtrAddressSpace* space, uint32_t va, void* output, size_t size);
 SnxCtrMemResult snx_ctr_write_ram(SnxCtrAddressSpace* space, uint32_t va, const void* input, size_t size);
 #endif

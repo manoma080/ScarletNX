@@ -4,9 +4,9 @@
 #include "simd.h"
 #include <string.h>
 
-/* Conservative VFPv2 recognition only. Emission deliberately stops with
-   BACKEND_UNSUPPORTED: A57 FP helpers do not implement VFPv2 short vectors.
-   Never silently execute NEON, D16..D31, VFPv3 immediates or fused operations. */
+/* VFPv2 recognition. Emission supports scalar mode only and rejects short
+   vectors/enabled exceptions before arithmetic. Never silently execute NEON,
+   D16..D31, VFPv3 immediates or fused operations. */
 static int vfp2(uint32_t w) {
     SnxArmVector v;
     if ((w >> 28) == 15 || !snx_arm_vector_decode(w, &v) || (v.flags & AV_SIMD)) return 0;

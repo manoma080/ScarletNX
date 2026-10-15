@@ -18,9 +18,10 @@ for that separate profile, and [3DS status](3DS.md) for outstanding work.
   Serialization makes the write preflight stable through response publication.
 - Translation framing checks descriptor forms and payload counts, classifying
   buffers before handles. PID is a 32-bit kernel-supplied caller identity, not
-  the value claimed by the guest. Incoming handles and PXI/mapped buffers remain
-  **unsupported**. Static buffers are accepted only by the checked APT utility /
-  ReceiveParameter and FS absent-SD paths below, not via a general schema type.
+  the value claimed by the guest. Incoming handles and PXI buffers remain
+  **unsupported**. Mapped writable output buffers are accepted only for the
+  checked FSFILE Read path. Static buffers are accepted only by APT utility /
+  ReceiveParameter, FS absent-SD and SelfNCCH paths below, not a general schema type.
   Other static-buffer commands stop explicitly; Switch descriptors are never used.
 - The response repeats the command ID; its first normal word is the service
   result. Transport SVC result and service result are distinct. Failed service
@@ -36,6 +37,7 @@ for that separate profile, and [3DS status](3DS.md) for outstanding work.
   64 `srv:` and 32 FS sessions. These are bounded implementation quotas, not
   complete hardware resource-limit/ExHeader capability enforcement. APT/PTM/HID
   session caps are 2 each; thread cap is 16 including the initial thread.
+  Read-only FSFILE objects have a separate 64-object cap.
 
 ## Generator subset
 
@@ -75,10 +77,28 @@ other translation units include the generated `.h`.
   its actual thread without a response/session. Peers can execute; the wait is
   not completed without registration. Dynamic service installation is unsupported.
 - `fs:USER` Initialize (`0x801`) and InitializeWithSdkVersion (`0x861`) record
-  caller/SDK association. OpenArchive (`0x80c`) accepts only archive 9, empty
-  path and a checked size-one static-buffer descriptor, returning FS NotFound
-  (`0xc8804478`) because this virtual console has no SD backing. **No archives /
-  files are opened or mounted.** Other FS operations remain unsupported.
+  caller/SDK association. OpenArchive (`0x80c`) accepts an empty path and a
+  checked size-one static descriptor. Archive 9 returns FS NotFound (`0xc8804478`)
+  because no SD backing exists. Archive 3 binds the real process RomFS: 32
+  live typed FS-private tokens, monotonically issued 64-bit IDs, never reused
+  and never kernel handles. CloseArchive (`0x80e`) retires that binding;
+  invalid/stale tokens return `0xc8804465`. Existing files outlive archive close.
+  OpenFileDirectly (`0x803`) supports only archive 3 (SelfNCCH), empty archive
+  path and the 12-byte all-zero binary RomFS selector, mode read-only and no
+  attributes. It returns a typed, reference-counted file object, not a fabricated
+  archive or mount. OpenFile (`0x802`) accepts a live archive token and the same
+  read-only binary selector. Missing RomFS returns its genuine NotFound error.
+  Token exhaustion and file/handle publication failures leave resources unchanged.
+  ControlArchive/timestamps remain unsupported; no synthetic timestamp is returned.
+- FSFILE GetSize (`0x804`), Close (`0x808`) and Read (`0x802`) expose a CTR
+  level-3 view reconstructed over extracted `romfs/`. `common/filesystem/`
+  supplies the same indexed nodes, immutable shared mappings and fallback
+  opens as NX; CTR metadata and wire framing are separate. No CIA/container is
+  reopened. Reads are capped at 16 MiB/request, clamp at EOF, preflight the
+  whole requested writable RAM span and stage all host IO before guest writes.
+  Malformed descriptors, MMIO and permissions cannot publish partial reads;
+  host IO failure stops without a reply or guest writes. Duplicates share close state. Writes,
+  general archive/path opens, SD/save backing and other commands stop explicitly.
 - `APT:S`: GetLockHandle (`1`), Initialize (`2`), Enable (`3`), NotifyToWait
   (`0x43`), ReceiveParameter (`0xd`), AppletUtility (`0x4b`), IsNew3DS (`0x102`).
   One application slot (`0x300`, attributes 0), persistent recursive mutex,
@@ -109,9 +129,15 @@ full thread lifecycle and multicore remain unsupported; no host-thread safety
 or hardware-complete scheduler claim is made. With no runnable peers a real
 wait stays BLOCKED, never a fabricated successful return.
 
-SuperTux **reaches and executes main**, then stops at FS OpenFileDirectly.
-See [the exact witness](3DS-SUPERTUX.md). FS resources must use extracted RomFS
-and common filesystem facilities, not mount the CIA or reuse NX services.
+GetSystemTick (`0x28`) uses a process-owned host monotonic origin and the
+268111856 Hz base domain on both models. A read-only shared page at `0x1ff81000`
+holds a host-UTC snapshot (milliseconds since 1900) and its tick reference.
+This is host-paced time, not cycle accuracy, timers or pending finite waits.
+
+SuperTux **reaches and executes main**, opens its real reconstructed RomFS,
+executes scalar VFP in `gettimeofday`, then opens its SelfNCCH archive and
+stops at timestamp ControlArchive (`0x80d`), before its first file read.
+See [the exact witness](3DS-SUPERTUX.md). No first frame is claimed.
 
 ## Tests and reference provenance
 
@@ -134,6 +160,11 @@ preflight, real resources, quotas/rollback, and PTM/HID/FS boundaries.
 `3ds_threads` tests context/TLS preservation, waiter ownership, event/mutex/
 arbiter wakeups, wait-all and no-peer blocking. A native synthetic CIA requires
 its worker to write shared RAM and signal main before main can exit successfully.
+A separate native CIA resolves and verifies a real extracted file through FSFILE.
+`3ds_filesystem` independently decodes CTR metadata/UTF-16/hash chains, compares
+contents, forces on-demand IO and checks failed-read atomicity, unavailable
+resources, EOF/permissions/MMIO, handle/object caps and duplicate/close ownership.
+The unchanged NX tree/service/raw-image fixtures also run in CTR-only builds.
 
 Reference facts: Azahar `68202bc4ff7edf9d7280ec0dcd6572b7cd1ae26e`,
 `core/hle/ipc.h`, `kernel/hle_ipc.cpp`, `kernel/svc.cpp`,

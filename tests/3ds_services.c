@@ -213,7 +213,8 @@ int main(void) {
         assert(get(p, 0) == 0x80c0040 && get(p, 1) == 0xc8804478); /* genuinely no SD backing */
         archive[1] = 3;
         request(p, archive, 6);
-        send(p, fs, SNX_CTR_SVC_UNSUPPORTED, 0);
+        send(p, fs, SNX_CTR_SVC_RETURN, 0);
+        assert(get(p, 0) == 0x80c0040 && get(p, 1) == 0xc8804464); /* no configured RomFS backing */
         snx_ctr_process_free(p);
     }
     puts("APT startup, real lock/events, grouped handles, checked buffers, PTM/HID and absent-SD behavior passed");

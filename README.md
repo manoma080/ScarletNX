@@ -76,9 +76,11 @@ explicit ARM11/checked-memory profile without changing shared A57 defaults.
 Larger images now use bounded chunked static CFG compilation (16 MiB text cap).
 SuperTux now completes minimal APT startup with real synchronization/thread
 resources, initializes HID handles and **reaches and executes main**. It then
-stops at unsupported FS OpenFileDirectly: **no first frame, audio or gameplay**.
+opens its reconstructed RomFS using NX's shared filesystem backing, executes
+scalar VFP in `gettimeofday`, then stops at FS's archive timestamp request:
+**no first frame, audio or gameplay**.
 Checked CTR IPC uses a separate SwIPC mode; ARM11 exclusives and serialized
-native thread scheduling work. VFP, cache/resume, full HLE and devices remain incomplete. The default
+native thread scheduling work. Full VFPv2, cache/resume, HLE and devices remain incomplete. The default
 build still stops after extraction.
 See the [staged 3DS port](docs/3DS.md) for limits, build instructions and remaining work.
 

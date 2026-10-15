@@ -103,10 +103,6 @@ int plat_text_input(char* out, size_t cap, const char* initial) {
 #ifndef MAP_NORESERVE
 #define MAP_NORESERVE 0
 #endif
-void pm_init(PMutex* m) { pthread_mutex_init(&m->l, NULL); }
-void pm_lock(PMutex* m) { pthread_mutex_lock(&m->l); }
-void pm_unlock(PMutex* m) { pthread_mutex_unlock(&m->l); }
-int pm_trylock(PMutex* m) { return !pthread_mutex_trylock(&m->l); }
 void pc_init(PCond* c) {
     pthread_condattr_t a;
     pthread_condattr_init(&a);
@@ -309,7 +305,6 @@ const char* plat_dl_error(void) {
     const char* e = dlerror();
     return e ? e : "no error reported";
 }
-int plat_mkdir(const char* p) { return mkdir(p, 0755); }
 int plat_is_dir(const char* p) {
     struct stat s;
     return !stat(p, &s) && S_ISDIR(s.st_mode);
@@ -412,54 +407,6 @@ void plat_file_unmap(PFileMap* m) {
     m->data = NULL;
     m->size = 0;
     m->borrowed = 0;
-}
-/* Descriptors left to everything opened on demand: saves, the Vulkan driver, audio, dlopen */
-#define SHARE_FD_RESERVE 256
-/* A RomFS holds thousands of files and the soft limit is usually 1024, against a hard one in the hundreds of
-   thousands: raise it once. Nothing in the runtime uses select(), the one API that breaks on descriptors >= 1024 */
-static rlim_t share_fd_limit(void) {
-    static rlim_t limit;
-    if (!limit) {
-        struct rlimit r;
-        if (getrlimit(RLIMIT_NOFILE, &r)) {
-            limit = 1024;
-        } else {
-            if (r.rlim_cur < r.rlim_max) {
-                rlim_t soft = r.rlim_cur;
-                r.rlim_cur = r.rlim_max;
-                if (setrlimit(RLIMIT_NOFILE, &r)) r.rlim_cur = soft; /* a hard limit above the kernel's nr_open */
-            }
-            limit = r.rlim_cur;
-        }
-    }
-    return limit;
-}
-int plat_file_share(const char* path, u64 size, int* fd, const u8** data) {
-    *fd = -1;
-    *data = NULL;
-    if (size > SIZE_MAX || size > INT64_MAX) return -1;
-    rlim_t limit = share_fd_limit();
-    int f = open(path, O_RDONLY | O_CLOEXEC);
-    if (f < 0) return -1;
-    /* descriptors are handed out lowest first, so the number counts the ones in use */
-    if (limit != RLIM_INFINITY && (rlim_t)f + SHARE_FD_RESERVE >= limit) {
-        close(f);
-        return -1;
-    }
-    if (size) { /* lazy: no MAP_POPULATE, a page is read when the game first touches it */
-        void* p = mmap(NULL, (size_t)size, PROT_READ, MAP_SHARED, f, 0);
-        if (p == MAP_FAILED) {
-            close(f);
-            return -1;
-        }
-        *data = p;
-    }
-    *fd = f;
-    return 0;
-}
-void plat_file_unshare(int fd, const u8* data, u64 size) {
-    if (data) munmap((void*)data, (size_t)size);
-    if (fd >= 0) close(fd);
 }
 int plat_replace_file(const char* tmp, const char* dst) {
     if (!rename(tmp, dst)) return 0;

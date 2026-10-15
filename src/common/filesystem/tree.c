@@ -1,8 +1,9 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later
    Copyright 2026 the ScarletNX contributors */
-#include "hle/filesystem/fs_tree.h"
+#include "filesystem/tree.h"
 #include <errno.h>
 #include <limits.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #if defined(_WIN32)
@@ -146,7 +147,8 @@ static int valid_name(const char* s, size_t len) {
         return 0;
     if ((!strncmp(stem, "COM", 3) || !strncmp(stem, "LPT", 3)) &&
         ((n == 4 && stem[3] >= '1' && stem[3] <= '9') ||
-         (n == 5 && (u8)stem[3] == 0xC2 && ((u8)stem[4] == 0xB9 || (u8)stem[4] == 0xB2 || (u8)stem[4] == 0xB3))))
+         (n == 5 && (uint8_t)stem[3] == 0xC2 &&
+          ((uint8_t)stem[4] == 0xB9 || (uint8_t)stem[4] == 0xB2 || (uint8_t)stem[4] == 0xB3))))
         return 0;
 #endif
     return 1;
@@ -341,7 +343,7 @@ static int host_unlink(const char* path, int is_dir) {
 #endif
 }
 
-static int host_create_file(const char* path, u64 size, int* remains, u64* actual_size) {
+static int host_create_file(const char* path, uint64_t size, int* remains, uint64_t* actual_size) {
     *remains = 0;
     *actual_size = 0;
 #if defined(_WIN32)
@@ -352,7 +354,7 @@ static int host_create_file(const char* path, u64 size, int* remains, u64* actua
     if (fd < 0) return -1;
     *remains = 1;
 #if defined(_WIN32)
-    int rc = size ? (int)_chsize_s(fd, (i64)size) : 0;
+    int rc = size ? (int)_chsize_s(fd, (int64_t)size) : 0;
 #else
     int rc = size ? ftruncate(fd, (off_t)size) : 0;
 #endif
@@ -364,10 +366,10 @@ static int host_create_file(const char* path, u64 size, int* remains, u64* actua
 #if defined(_WIN32)
         LARGE_INTEGER actual;
         if (GetFileSizeEx((HANDLE)_get_osfhandle(fd), &actual) && actual.QuadPart >= 0)
-            *actual_size = (u64)actual.QuadPart;
+            *actual_size = (uint64_t)actual.QuadPart;
 #else
         struct stat actual;
-        if (!fstat(fd, &actual) && actual.st_size >= 0) *actual_size = (u64)actual.st_size;
+        if (!fstat(fd, &actual) && actual.st_size >= 0) *actual_size = (uint64_t)actual.st_size;
 #endif
     }
 #if defined(_WIN32)
@@ -383,11 +385,11 @@ static int host_create_file(const char* path, u64 size, int* remains, u64* actua
     return rc;
 }
 
-FsTreeResult fs_tree_create(FsTree* tree, FsNode* scope, const char* path, int is_dir, u64 size, FsNode** out) {
+FsTreeResult fs_tree_create(FsTree* tree, FsNode* scope, const char* path, int is_dir, uint64_t size, FsNode** out) {
     if (out) *out = NULL;
     if (size > INT64_MAX || (is_dir && size)) return FS_TREE_INVALID;
 #if !defined(_WIN32)
-    if ((off_t)size < 0 || (u64)(off_t)size != size) return FS_TREE_INVALID;
+    if ((off_t)size < 0 || (uint64_t)(off_t)size != size) return FS_TREE_INVALID;
 #endif
     FsNode* parent;
     char name[FS_TREE_PATH_MAX], host[FS_TREE_PATH_MAX];
@@ -416,7 +418,7 @@ FsTreeResult fs_tree_create(FsTree* tree, FsNode* scope, const char* path, int i
         if (plat_mkdir(host)) rc = FS_TREE_IO;
     } else {
         int remains;
-        u64 actual_size;
+        uint64_t actual_size;
         if (host_create_file(host, size, &remains, &actual_size)) {
             rc = host_error();
             /* A failed rollback still left a successfully created host entry; keep that partial result indexed. */
@@ -569,7 +571,8 @@ FsTreeResult fs_tree_rename(FsTree* tree, FsNode* scope, const char* src, const 
     return FS_TREE_OK;
 }
 
-FsTreeResult fs_tree_add_virtual(FsTree* tree, const char* relative_path, const void* data, u64 size, FsNode** out) {
+FsTreeResult fs_tree_add_virtual(FsTree* tree, const char* relative_path, const void* data, uint64_t size,
+                                 FsNode** out) {
     if (out) *out = NULL;
     if (!relative_path || separator(*relative_path) || strchr(relative_path, ':') || size > SIZE_MAX ||
         size > INT64_MAX || (size && !data))
@@ -617,6 +620,13 @@ FsTreeResult fs_tree_add_virtual(FsTree* tree, const char* relative_path, const 
     }
 }
 
+FILE* fs_tree_open(FsTree* tree, FsNode* node, const char* mode) {
+    char path[FS_TREE_PATH_MAX];
+    if (node->is_dir || node->is_virtual || fs_tree_path(tree, node, path, sizeof path)) return NULL;
+    FILE* file = fopen(path, mode);
+    if (file) setvbuf(file, NULL, _IONBF, 0);
+    return file;
+}
 FsTreeResult fs_tree_share(FsTree* tree, FsNode* node, unsigned* shared, unsigned* failed) {
     if (!belongs_to(tree, node)) return FS_TREE_NOTFOUND;
     node->readonly = 1;
@@ -678,14 +688,14 @@ static FsTreeResult scan_directory(FsTree* tree, FsNode* parent, char* host, uns
             host[parent_len] = '/';
             memcpy(host + parent_len + 1, name, len + 1);
             int is_dir;
-            u64 size;
+            uint64_t size;
 #if defined(_WIN32)
             if (entry.dwFileAttributes & (FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_DEVICE)) {
                 rc = FS_TREE_INVALID;
                 break;
             }
             is_dir = !!(entry.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY);
-            size = ((u64)entry.nFileSizeHigh << 32) | entry.nFileSizeLow;
+            size = ((uint64_t)entry.nFileSizeHigh << 32) | entry.nFileSizeLow;
             if (!is_dir) {
                 /* Each indexed file has its own size cache. Reject hardlinks so a write through one pathname
                    cannot silently change another node's size. This attribute-only check is startup-only. */
@@ -703,7 +713,7 @@ static FsTreeResult scan_directory(FsTree* tree, FsNode* parent, char* host, uns
                          (info.dwFileAttributes & (FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_DIRECTORY)))
                     rc = FS_TREE_INVALID;
                 else
-                    size = ((u64)info.nFileSizeHigh << 32) | info.nFileSizeLow;
+                    size = ((uint64_t)info.nFileSizeHigh << 32) | info.nFileSizeLow;
                 if (!CloseHandle(file) && !rc) rc = FS_TREE_IO;
                 if (rc) break;
             }
@@ -719,7 +729,7 @@ static FsTreeResult scan_directory(FsTree* tree, FsNode* parent, char* host, uns
                 break;
             }
             is_dir = S_ISDIR(st.st_mode);
-            size = (u64)st.st_size;
+            size = (uint64_t)st.st_size;
 #endif
             FsNode* n = node_new(name, is_dir);
             if (!n) {

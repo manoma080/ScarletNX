@@ -38,7 +38,8 @@ int main(void) {
     for (unsigned i = 0; i < 128; ++i) put(image.code + 0x1808 + i * 4, 0xef000003);
     for (unsigned i = 0; i < 64; ++i) put(image.code + 0x2000 + i * 4, 0xe1a00000);
     put(image.code + 0x2100, 0xef000003);
-    const uint32_t roots[] = {0x100200, 0x100240, 0x100300, 0x100500, 0x100600, 0x100a01, 0x100b00, 0x100c00, 0x100f00};
+    const uint32_t roots[] = {0x100200, 0x100240, 0x100300, 0x100500, 0x100600,
+                              0x100a01, 0x100b00, 0x100c00, 0x100f00, 0x100900};
     for (unsigned i = 0; i < sizeof roots / sizeof *roots; ++i) put(image.code + 0x5010 + i * 4, roots[i]);
     put(image.code + 0x200, 0xfa00007e);
     put(image.code + 0x204, 0xef000003); /* immediate BLX -> Thumb */
@@ -57,6 +58,10 @@ int main(void) {
     half(image.code + 0xa02, 0xfefe); /* negative legacy BL */
     half(image.code + 0xa04, 0xdf03);
     half(image.code + 0x800, 0x4770);
+    put(image.code + 0x900, 0xee000a10); /* VMOV / unsigned conversion / arithmetic must fall through offline */
+    put(image.code + 0x904, 0xeeb80b40);
+    put(image.code + 0x908, 0xee301b00);
+    put(image.code + 0x90c, 0xef000003);
     put(image.code + 0xb00, 0xe1902f9f);
     put(image.code + 0xb04, 0xe1803f91);
     put(image.code + 0xb08, 0xef000003);
@@ -92,6 +97,7 @@ int main(void) {
     assert(snx_ctr_plan_length(&p, 0x100508, false) == 1 && !snx_ctr_plan_length(&p, 0x100508, true));
     assert(snx_ctr_plan_length(&p, 0x100600, false) == 2 && snx_ctr_plan_length(&p, 0x100700, true) == 1);
     assert(snx_ctr_plan_length(&p, 0x100800, true) == 1 && snx_ctr_plan_length(&p, 0x100a04, true) == 1);
+    assert(snx_ctr_plan_length(&p, 0x100900, false) == 4);
     assert(snx_ctr_plan_length(&p, 0x100b00, false) == 3); /* reservations do not terminate static discovery */
     assert(snx_ctr_plan_length(&p, 0x100d00, false) == 1 && snx_ctr_plan_length(&p, 0x100d20, false) == 1);
     assert(snx_ctr_plan_length(&p, 0x100d40, true) == 1);
@@ -114,6 +120,17 @@ int main(void) {
     image.code = calloc(1, image.code_size);
     assert(image.code);
     assert(!snx_ctr_discover(&image, &p, error, sizeof error) && strstr(error, "instruction limit") && !p.arm);
+    free(image.code);
+    /* Independent entry-cap failure: many genuine exits, below the instruction
+       cap. Increased VFP coverage must remain bounded, not truncate silently. */
+    image = (SnxCtrImage){.code_size = 0x102000, .segment = {{0x100000, 129, 0x80004}, {0x200000, 129, 0x80004}}};
+    image.code = calloc(1, image.code_size);
+    assert(image.code);
+    for (unsigned i = 0; i < 131073; ++i) {
+        put(image.code + i * 4, 0xef000003);
+        put(image.code + 0x81000 + i * 4, 0x100000 + i * 4);
+    }
+    assert(!snx_ctr_discover(&image, &p, error, sizeof error) && strstr(error, "entry limit") && !p.arm);
     free(image.code);
     puts("CTR bounded static CFG discovery / literal-pointer / jump-window / resource tests passed");
     return 0;

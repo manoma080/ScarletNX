@@ -4,6 +4,7 @@
 #define SNX_CTR_PROCESS_INTERNAL_H
 #include "ctr_process.h"
 #include "kernel/ctr_kernel.h"
+#include "services/romfs.h"
 #define CTR_HANDLES        256u
 #define CTR_OBJECTS        256u
 #define CTR_PHYS_BASE      0x20000000u
@@ -24,8 +25,15 @@ enum {
     CTR_OBJ_SESSION,
     CTR_OBJ_MUTEX,
     CTR_OBJ_EVENT,
-    CTR_OBJ_SHARED
+    CTR_OBJ_SHARED,
+    CTR_OBJ_FILE
 };
+#define CTR_SELF_ARCHIVES 32u
+/* FS-private read-only SelfNCCH bindings, never kernel handles. Tokens are
+   monotonically issued and never reused; the process owns their RomFS backing. */
+typedef struct {
+    uint64_t token;
+} CtrSelfArchive;
 typedef struct {
     SnxArmCPU context; /* inactive architectural prefix only; never the checked adapter */
     uint32_t priority, dead, waiting_object, waiting_address;
@@ -39,6 +47,9 @@ typedef struct {
             uint32_t service, client_pid, sdk_version;
         } session;
         CtrThread thread;
+        struct {
+            uint32_t closed;
+        } file;
         struct {
             uint32_t physical, size, permissions;
         } shared;
@@ -54,6 +65,7 @@ typedef struct {
     uint32_t generation, object;
 } CtrHandle;
 struct SnxCtrProcess {
+    SnxCtrRomfs* romfs; /* runtime-owned immutable host filesystem view */
     SnxCtrMemory* memory;
     SnxCtrAddressSpace* space;
     SnxCtrCpu cpu;
@@ -66,6 +78,9 @@ struct SnxCtrProcess {
     uint32_t apt_phase, apt_notification, apt_parameter;
     uint32_t hid_objects[6];
     uint32_t shell_closed; /* virtual console starts with its shell open */
+    double clock_origin;   /* host monotonic origin for the base ARM11 tick domain */
+    CtrSelfArchive self_archives[CTR_SELF_ARCHIVES];
+    uint64_t archive_sequence;
     uint64_t svc_count;
     unsigned char physical_owner[];
 };

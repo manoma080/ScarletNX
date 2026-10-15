@@ -127,13 +127,7 @@ static int node_in_memory(const FsNode* node) { return node->is_virtual || node-
 static const u8* node_memory(const FsNode* node) { return node->is_virtual ? node->virtual_data : node->map; }
 
 /* Callers hold tree.lock: content I/O is permitted only after resolving an indexed node. */
-static FILE* node_open(FsNode* node, const char* mode) {
-    char path[FS_TREE_PATH_MAX];
-    if (node->is_dir || node->is_virtual || fs_tree_path(&fsp.tree, node, path, sizeof path)) return NULL;
-    FILE* f = fopen(path, mode);
-    if (f) setvbuf(f, NULL, _IONBF, 0); /* keep different handles coherent */
-    return f;
-}
+static FILE* node_open(FsNode* node, const char* mode) { return fs_tree_open(&fsp.tree, node, mode); }
 
 FILE* fs_open_read(const char* path, u64* size) {
     FsNode* node;

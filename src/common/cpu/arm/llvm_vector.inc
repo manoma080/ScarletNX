@@ -43,7 +43,10 @@ static void vector_memory(ArmIR* a, const SnxArmVector* v) {
     int single = (v->flags & AV_PRE) && !(v->flags & AV_WB);
     end = v->flags & AV_UP ? add(a, base, offset) : sub(a, base, offset);
     addr = single || (v->flags & AV_PRE) ? end : base;
-    bounds(a, addr, v->bytes, 4);
+    if (a->memory == SNX_ARM_MEMORY_CHECKED)
+        transfer_begin(a, addr, v->bytes, 4, !(v->flags & AV_LOAD), 1);
+    else
+        bounds(a, addr, v->bytes, 4);
     for (unsigned i = 0; i < v->bytes; i += 4) {
         LLVMValueRef p = add(a, addr, c32(a, i));
         if (v->flags & AV_LOAD)
@@ -51,6 +54,7 @@ static void vector_memory(ArmIR* a, const SnxArmVector* v) {
         else
             writemem(a, p, 4, vget(a, v->d + i, 32));
     }
+    if (a->memory == SNX_ARM_MEMORY_CHECKED && !(v->flags & AV_LOAD)) transfer_commit(a);
     if (v->flags & AV_WB) setreg(a, v->n, end);
 }
 static void vector_transfer(ArmIR* a, const SnxArmVector* v) {
@@ -61,8 +65,12 @@ static void vector_transfer(ArmIR* a, const SnxArmVector* v) {
                 PUT(a, cpsr, bor(a, band(a, GET(a, cpsr), c32(a, 0x0fffffff)), band(a, f, c32(a, 0xf0000000))));
             else
                 setreg(a, v->n, f);
-        } else
+        } else {
+            if (a->profile == SNX_ARM_PROFILE_ARM11)
+                require(a, cmp(a, LLVMIntEQ, band(a, reg(a, v->n), c32(a, ~0xf3c0009fu)), c32(a, 0)),
+                        SNX_ARM_BACKEND_UNSUPPORTED, c32(a, a->word));
             PUT(a, fpscr, band(a, reg(a, v->n), c32(a, 0xffc0009f)));
+        }
     } else if (v->op == AV_CORE_PAIR) {
         LLVMValueRef x, y;
         if (v->flags & AV_LOAD) {
@@ -145,6 +153,21 @@ static void vector_instruction(ArmIR* a) {
     if (!snx_arm_vector_decode(a->word, &v)) {
         trap(a, SNX_ARM_UNDEFINED, c32(a, a->word));
         return;
+    }
+    if (a->profile == SNX_ARM_PROFILE_ARM11) {
+        /* Profile decoding has excluded NEON, D16..31 and post-VFPv2 forms.
+           No short-vector or enabled-FP-exception semantics are substituted.
+           Transfers/status do not consume LEN/STRIDE or arithmetic controls. */
+        /* Odd double-register multiple counts are legacy FSTMX/FLDMX forms
+           with an extra format word, not ordinary VLDM/VSTM transactions. */
+        int multiple = !(v.flags & AV_PRE) || (v.flags & AV_WB);
+        if (v.op == AV_MEM && (v.bytes > 64 || (multiple && v.width == 64 && (v.imm & 4)))) {
+            trap(a, SNX_ARM_BACKEND_UNSUPPORTED, c32(a, a->word));
+            return;
+        }
+        if (v.op != AV_MEM && v.op != AV_CORE && v.op != AV_CORE_PAIR && v.op != AV_STATUS)
+            require(a, cmp(a, LLVMIntEQ, band(a, GET(a, fpscr), c32(a, 0x00379f00)), c32(a, 0)),
+                    SNX_ARM_BACKEND_UNSUPPORTED, c32(a, a->word));
     }
     if (v.op == AV_CRYPTO) {
         LLVMTypeRef types[] = {a->ptr, a->i32, a->i32, a->i32, a->i32};

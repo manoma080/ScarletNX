@@ -59,7 +59,7 @@ int main(int argc, char** argv) {
         if (!ok) fprintf(stderr, "%s\n", error);
         assert(ok);
         SnxCtrProcess* process = snx_ctr_process_new(&image, SNX_CTR_OLD);
-        assert(process);
+        assert(process && snx_ctr_process_mount_fs(process, argv[1]));
         uint64_t executed;
         bool bootstrap = !strcmp(argv[2], "supertux_boot");
         SnxCtrRunResult state =
@@ -120,7 +120,7 @@ int main(int argc, char** argv) {
             assert(read_word(space, 0x10004c) == 0xe59f3038 && read_word(space, 0x100054) == 0xe12fff13);
             uint32_t main_pc = read_word(space, 0x10008c);
             assert(main_pc == 0x167d88);
-            bool entered_main = false;
+            bool entered_main = false, opened_direct = false, opened_archive = false;
             do {
                 if (cpu->r[15] == main_pc) {
                     assert(cpu->r[14] == 0x1626c4);
@@ -130,12 +130,19 @@ int main(int argc, char** argv) {
                 }
                 state = snx_ctr_dispatch(native.module, process, 1, &continued);
                 executed += continued;
+                uint32_t command = cpu->tpidruro + 0x80, header = read_word(space, command);
+                if (header == 0x08030042 && !read_word(space, command + 4) && read_word(space, command + 12))
+                    opened_direct = true;
+                if (header == 0x080c00c0 && !read_word(space, command + 4) &&
+                    (read_word(space, command + 8) || read_word(space, command + 12)))
+                    opened_archive = true;
             } while (state == SNX_CTR_RUN_BUDGET && executed < 500000);
             printf("SuperTux post-startup boundary: state=%u pc=0x%08x syndrome=0x%08x blocks=%llu\n", (unsigned)state,
                    cpu->r[15], cpu->syndrome, (unsigned long long)executed);
-            assert(entered_main && state == SNX_CTR_RUN_UNSUPPORTED && cpu->exit == SNX_ARM_SVC &&
-                   cpu->syndrome == 0x32);
-            assert(read_word(space, cpu->tpidruro + 0x80) == 0x08030204);
+            assert(entered_main && opened_direct && opened_archive);
+            assert(state == SNX_CTR_RUN_UNSUPPORTED && cpu->exit == SNX_ARM_SVC);
+            assert(cpu->r[15] == 0x1def50 && cpu->syndrome == 0x32); /* ControlArchive / timestamp */
+            assert(read_word(space, cpu->tpidruro + 0x80) == 0x080d0144);
         } else if (!strcmp(argv[2], "kernel")) {
             assert(state == SNX_CTR_RUN_EXIT && executed == 14 && cpu->r[0] == 42);
             assert(read_word(snx_ctr_process_space(process), 0x08000000) == 1);

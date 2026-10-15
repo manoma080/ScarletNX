@@ -80,6 +80,111 @@ def ipc_program(wait=False):
     return application(words, ro=ro)
 
 
+def fp_program(discover=False):
+    # Native module must contain/link actual software FP primitives, including
+    # in an installed compiler with no build-tree runtime archive lookup.
+    return application(
+        [
+            0xE3A0000D,
+            0xE59F4034,
+            0xEE000A10,
+            0xEEB80B40,
+            0xEE301B00,
+            0xEE812B00,
+            0xED841B00,
+            0xED943B00,
+            0xEE333B40,
+            0xEEBD0BC3,
+            0xEE100A10,
+            0xE350000D,
+            0x1A000001,
+            0xE3A0002A,
+            0xEF000003,
+            0xE1200070,
+            0x00300100,
+        ],
+        text_size=8192 if discover else None,
+    )
+
+
+def fs_program():
+    # Actual native SVC/CTR sessions, not scripted FS replies. Resolve hello.txt
+    # through the returned CTR metadata and check the underlying extracted bytes.
+    words, literals, failures = [0xEE1D4F70, 0xE2845080], [], []
+    ro = bytearray(b'srv:\0'.ljust(16, b'\0'))
+
+    def literal(register, value):
+        literals.append((len(words), register, value))
+        words.append(0)
+
+    def equal(register, value):
+        literal(12, value)
+        words.append(0xE150000C | register << 16)
+        failures.append(len(words))
+        words.append(0)
+
+    def send(handle, command):
+        literal(3, 0x200000 + len(ro))
+        ro.extend(struct.pack('<' + 'I' * len(command), *command))
+        for i in range(len(command)):
+            words.extend([0xE5930000 | i * 4, 0xE5850000 | i * 4])
+        words.extend([0xE1A00000 | handle, 0xEF000032])
+        equal(0, 0)
+        words.append(0xE5950004)
+        equal(0, 0)
+
+    literal(1, 0x200000)
+    words.append(0xEF00002D)
+    equal(0, 0)
+    words.append(0xE1A06001)
+    send(6, [0x10002, 0x20, 0xFFFFFFFF])
+    send(6, [0x50100, 0x553A7366, 0x00524553, 7, 1])
+    words.append(0xE595700C)
+    send(7, [0x8010002, 0x20, 0xFFFFFFFF])
+    send(7, [0x8030204, 0, 3, 1, 1, 2, 12, 1, 0, 0x4802, 0x300120, 0x30002, 0x300100])
+    words.append(0xE595800C)
+    send(8, [0x8040000])
+    words.extend([0xE595A008, 0xE595000C])
+    equal(0, 0)
+    send(8, [0x80200C2, 0, 0, 512, 0x200C, 0x300400])
+    words.extend([0xE5950008, 0xE150000A])  # short EOF length equals GetSize
+    failures.append(len(words))
+    words.append(0)
+    literal(9, 0x300400)
+    words.append(0xE5990000)
+    equal(0, 40)
+    words.extend(
+        [
+            0xE599200C,
+            0xE0892002,
+            0xE592200C,
+            0xE599301C,
+            0xE0893003,
+            0xE0833002,
+            0xE5932008,
+            0xE5993024,
+            0xE0822003,
+            0xE0892002,
+            0xE5920000,
+        ]
+    )
+    equal(0, 0x6C6C6568)
+    words.append(0xE5D20004)
+    equal(0, 0x6F)
+    send(8, [0x8080000])
+    words.extend([0xE1A00008, 0xEF000023])
+    equal(0, 0)
+    words.extend([0xE3A0002A, 0xEF000003])
+    failure = len(words)
+    words.append(0xE1200070)
+    for at in failures:
+        words[at] = 0x1A000000 | ((failure - at - 2) & 0xFFFFFF)
+    for at, register, value in literals:
+        words[at] = 0xE59F0000 | register << 12 | ((len(words) - at - 2) * 4)
+        words.append(value)
+    return application(words, ro=ro)
+
+
 def thread_program():
     # Real guest SVCs: main blocks, a lower-priority native worker signals the
     # event, and the saved main context resumes. No scripted HLE effects.
@@ -249,6 +354,9 @@ def main():
             3,
             'guest blocked (no runnable thread)',
         )
+        run(fp_program(), message='Guest ExitProcess: r0=42')
+        run(fp_program(discover=True), message='Guest ExitProcess: r0=42')
+        run(fs_program(), message='Guest ExitProcess: r0=42')
         run(thread_program(), message='Guest ExitProcess: r0=42')
         run(ipc_program(), message='Guest ExitProcess: r0=42')
         run(ipc_program(wait=True), 3, 'wait_service=MISSING')

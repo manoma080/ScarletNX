@@ -107,7 +107,7 @@ def main():
                 '-include',
                 str(probe),
                 '-c',
-                str(repo / 'src/nx/hle/filesystem/fs_tree.c'),
+                str(repo / 'src/common/filesystem/tree.c'),
                 '-o',
                 str(tree_obj),
             ],

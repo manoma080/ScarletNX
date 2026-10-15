@@ -2,20 +2,24 @@
 <!-- Copyright 2026 the ScarletNX contributors -->
 # Nintendo 3DS port
 
-## Status: stage 1 + stage 2a + stages 2b1–2b4 + initial 3a/3b
+## Status: stage 1 + stage 2a + stages 2b1–2b4 + initial 3a/3b/FS
 
 `scarletnx-3ds` extracts **decrypted application CIAs**. With `SNX_3DS_AOT=ON`,
 it performs **extract -> offline static AOT -> native module -> checked ARM/Thumb
 execution**. Both asset-free witnesses and the supplied SuperTux CIA's native
 startup gate pass. SuperTux completes minimal APT startup, creates a native
 background thread, initializes HID and **reaches and executes main** at
-`0x00167d88` (50,489 blocks). It stops at unsupported FS OpenFileDirectly after
-50,554 blocks / 58 SVCs. It is **not playable**; no first frame or audio yet. See the
+`0x00167d88` (50,489 blocks), then opens its reconstructed RomFS. It stops at
+FS `ControlArchive` (timestamp) after 50,629 blocks / 61 SVCs, having executed
+scalar VFP in `gettimeofday`, but before its first
+file read. It is **not playable**; no first frame or audio yet. See the
 [SuperTux integration target](3DS-SUPERTUX.md) for the pinned input and next blockers.
 
 Text is bounded at **16 MiB**, using conservative static CFG discovery for larger
 images. This is not complete indirect-target coverage or a general 3DS runtime.
-VFP remains unsupported. Stage 2b4 adds serialized ARM11 checked exclusives and
+Scalar VFPv2 now supports F32/F64 arithmetic/conversions and bounded atomic RAM
+transfers; short vectors, enabled exceptions and legacy extended-save forms
+remain unsupported. Stage 2b4 adds serialized ARM11 checked exclusives and
 a bounded kernel-bootstrap subset. Stage 2 still needs broader discovery/ISA
 validation and cache/resume. Initial stage 3a adds a SwIPC-derived CTR generator,
 checked transport and bounded service sessions. Initial 3b adds the minimal
@@ -119,9 +123,19 @@ TLS command words; `0x35` identifies the actual process root. A separate SwIPC
 ownership. Initial 3b adds a one-application APT startup lifecycle, real recursive
 lock/events, serialized thread contexts/waits/wakeups, PTM base/model queries
 and HID handles/read-only mapping. HID sampling is not implemented. FS supports
-PID/SDK initialization and an actual missing-SD error, **not archive/file IO**.
-Unknown commands stop; absent-service waits block the calling thread without a
-fake session/response. SuperTux reaches main, then stops at FS OpenFileDirectly.
+PID/SDK initialization, an actual missing-SD error and read-only SelfNCCH RomFS
+OpenFileDirectly, bounded OpenArchive/OpenFile/CloseArchive and FSFILE
+Read/GetSize/Close. Archive tokens are FS-private monotonic 64-bit identifiers,
+not kernel handles; 32 live bindings are allowed and stale IDs never revive.
+NX and CTR share `common/filesystem/`
+indexing, immutable file mappings and fallback opens, not their IPC protocols or
+RomFS metadata. Only extracted `romfs/` is exposed; no original container reads.
+Writes, general archives/paths and SD/save backing remain unsupported. Reads
+preflight the complete guest destination and stage host IO before publication.
+Host-paced GetSystemTick and a read-only UTC shared-page snapshot support time
+queries, not cycle accuracy or timers. Unknown commands stop; absent-service
+waits block without a fake response. SuperTux's next blocker is the archive
+timestamp control request; no timestamp is fabricated.
 
 See [CTR IPC](CTR-IPC.md) for the strict generator subset, descriptor/permission
 checks, quotas, malformed-request policy, tests and unimplemented operations.
@@ -193,7 +207,8 @@ resume policy still need a separate design). Initial AOT also requires a
 word-multiple declared text length. Text-page padding beyond declared text has
 no static entry, even if its page is executable. Larger images also have NULL
 slots for unproven indirect targets; these fail explicitly without recompilation.
-The static graph is capped at 524288 discovered instructions and 65536 entries;
+The static graph is capped at 524288 discovered instructions and 131072 entries;
+the entry cap was raised for genuine scalar-VFP fallthrough coverage, not runtime discovery.
 exceeding either aborts compilation, never silently truncates the graph. Objects
 together are capped at 256 MiB and the linked module at 512 MiB. Tiny-image code
 uses O2; larger-image chunks use O1, with 128 entries per LLVM module.
@@ -256,7 +271,8 @@ transcript, not hardware kernel semantics. A third comparison continues through
 scripted `srv:` connection/registration effects to before APT lookup, again matching
 all GPRs/CPSR and complete RAM snapshots without independently proving IPC policy.
 Unicorn is never a runtime engine. The same native witness subsequently observes
-CRT entry into main and executes it to the next unsupported FS operation.
+CRT entry into main, successful RomFS file/archive opens, scalar VFP execution
+and the next unsupported archive timestamp request.
 Separate native CIA and unit tests exercise actual worker wakeups, resources
 and rollback. Service policy is not independently hardware-validated.
 No sample binaries are downloaded or distributed.
@@ -311,10 +327,10 @@ Remaining requirements beyond the initial native bootstrap pipeline:
    short-vector FPSCR behavior), missing ARMv6K instructions and alignment-mode
    validation. Current ordinary unaligned transfers model unaligned support
    enabled/alignment checking disabled, not every ARM11 CP15 configuration.
-2. The separate checked-memory ABI and CTR adapter are implemented for integer
-   transfers. ARM11 checked exclusives now have serialized bus-owned reservations,
+2. The separate checked-memory ABI and CTR adapter implement integer and
+   bounded scalar ARM11 VFP transfers. ARM11 checked exclusives now have serialized bus-owned reservations,
    including alias/ABA invalidation. Concurrent scheduling and broader monitor
-   validation remain pending. VFP/vector transfers, A57 checked exclusives and
+   validation remain pending. General vector transfers, A57 checked exclusives and
    checked Thumb table branches remain unsupported. Never pass an A64 `CPU*` or
    an NX module to an A32 block.
 3. Module ABI 1 supports exhaustive tiny images and bounded conservative CFG
@@ -357,8 +373,9 @@ compilation and passes the external SuperTux first-SVC native bootstrap gate.
 Stage 2b4 adds kernel-bootstrap objects, configuration, checked allocations and
 serialized ARM11 exclusives. That checkpoint reached ConnectToPort before `main`;
 initial 3a passed `srv:` registration and stopped at absent APT:S. Initial 3b
-now passes the bounded APT startup/thread/HID path and reaches main before an
-unsupported FS OpenFileDirectly request.
+passes the bounded APT startup/thread/HID path and reaches main. The minimal
+shared-backed FS increment opens RomFS. Scalar VFPv2 and its offline CFG
+fallthrough now pass `gettimeofday`; the next stop is archive timestamp control.
 **Stage 2 is not complete**: broader discovery/ISA coverage, full VFP, concurrent
 reservation/scheduling semantics, validated resume/cache and wider runtime
 validation remain pending.
@@ -398,8 +415,10 @@ static/mapped buffers and response layout are not Switch HIPC/CMIF.
 Initial 3a implements a strict generated subset, real session lifetimes, client
 registration/lookup and FS caller/SDK association. Initial 3b adds the observed
 APT startup, native threads and bounded PTM/HID resources, not a full applet or
-input subsystem. The title reaches main; FS resources/file IO and the full
-stage/OS/filesystem witness below remain unfinished.
+input subsystem. The minimal FS increment reuses NX's common indexed/mapped
+host backing for read-only SelfNCCH access. A synthetic native CIA reads and
+resolves a real extracted file; the full stage/OS/filesystem witness below
+remains unfinished. Archive timestamp control blocks the title before its first FS read.
 
 - Threads, handles, events, waits, scheduling, SVCs, TLS, shared memory and result
   codes; checked guest buffers and handle lifetimes at every IPC boundary.

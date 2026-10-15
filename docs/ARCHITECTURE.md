@@ -19,7 +19,10 @@ extraction -> separate offline `scarletnx-3ds-aot` LLVM compiler/host linker ->
 native ELF -> checked process/ARM/Thumb dispatch. `snx_ctr_process` maps raw
 ExHeader segments/BSS/stack/TLS; `snx_ctr_native` validates/loads module ABI 1.
 Only the offline compiler links LLVM. The runtime uses neither MCJIT nor NX/GNU
-ABI code. Existing host FS/staging/process utilities are reused.
+ABI code. `common/filesystem/` / `scarletnx-filesystem` owns NX and CTR's shared
+indexed host tree, immutable file mappings and on-demand opens. CTR uses its own
+level-3 RomFS serializer/file objects and wire protocol, not Switch FS IPC.
+Host staging/process utilities are also reused.
 
 The shared A32 backend's A57/flat defaults and CPU ABI 2 are unchanged. ARM11 ISA
 and callback memory are explicit codegen options, never global 3DS defines. The

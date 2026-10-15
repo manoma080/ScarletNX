@@ -23,7 +23,7 @@ foreach(opt 0 2)
     add_executable(snx-test-arm-checked-O${opt} arm_checked.c "${object}")
     snx_test_target(snx-test-arm-checked-O${opt} 11)
     target_compile_options(snx-test-arm-checked-O${opt} PRIVATE -UNDEBUG)
-    target_link_libraries(snx-test-arm-checked-O${opt} PRIVATE snx_ctr_cpu)
+    target_link_libraries(snx-test-arm-checked-O${opt} PRIVATE snx_ctr_cpu snx_arm_rt)
     add_test(NAME arm_checked_static_O${opt} COMMAND snx-test-arm-checked-O${opt})
 endforeach()
 # Exercise the unchanged A57 entry points without configuring the NX runtime.
@@ -56,6 +56,10 @@ if(NOT SNX_BUILD_NX AND NOT SNX_BUILD_GNUABI)
             get_filename_component(snx_llvm_bin "${snx_llvm_config_real}" DIRECTORY)
             find_program(SNX_LLVM_MC llvm-mc HINTS "${snx_llvm_bin}" NO_DEFAULT_PATH)
             if(SNX_LLVM_MC)
+                add_test(NAME arm11_vfp_differential COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/arm11_vfp.py"
+                    --emitter $<TARGET_FILE:snx-test-arm-emit> --runtime $<TARGET_FILE:snx_arm_rt>
+                    --mc "${SNX_LLVM_MC}" --cc "${CMAKE_C_COMPILER}")
+                set_tests_properties(arm11_vfp_differential PROPERTIES TIMEOUT 900)
                 add_test(NAME arm_llvm_vector COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/arm_vector_test.py"
                     --emitter $<TARGET_FILE:snx-test-arm-emit> --runtime $<TARGET_FILE:snx_arm_rt>
                     --mc "${SNX_LLVM_MC}" --cc "${CMAKE_C_COMPILER}")

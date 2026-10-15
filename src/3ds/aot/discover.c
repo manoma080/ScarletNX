@@ -10,7 +10,7 @@
 /* Resource limits apply to the offline graph, not to runtime compilation.
    Reject excessive graphs rather than silently publishing a truncated plan. */
 #define INSTRUCTION_LIMIT 524288u
-#define ENTRY_LIMIT       65536u
+#define ENTRY_LIMIT       131072u
 #define QUEUED            8u
 
 typedef struct {
@@ -112,7 +112,7 @@ static bool arm(Discovery* d, uint32_t pc, uint32_t w) {
     else if (k == SNX_A32_SVC) {
         stop = true;
         fall |= (w & 0xffffff) != 3;
-    } else if (k == SNX_A32_BKPT || k == SNX_A32_UNDEFINED || k == SNX_A32_VECTOR || k == SNX_A32_ACQUIRE_RELEASE)
+    } else if (k == SNX_A32_BKPT || k == SNX_A32_UNDEFINED || k == SNX_A32_ACQUIRE_RELEASE)
         stop = true;
     if (stop && fall) enqueue(d, pc + 4, false);
     return stop;

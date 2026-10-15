@@ -38,7 +38,7 @@ endfunction()
 
 if(TARGET snx_ctr_board)
     if(SNX_TEST_SANITIZERS)
-        foreach(target snx_ctr_board snx_ctr_memory snx_ctr_loader snx_ctr_cpu snx_ctr_process)
+        foreach(target snx_ctr_board snx_ctr_memory snx_ctr_loader snx_ctr_cpu snx_ctr_process scarletnx-filesystem)
             target_compile_options(${target} PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
             target_link_options(${target} INTERFACE -fsanitize=address,undefined)
         endforeach()
@@ -115,6 +115,11 @@ if(TARGET snx_ctr_board)
     if (NOT WIN32)
         find_package(Python3 QUIET COMPONENTS Interpreter)
         if(Python3_Interpreter_FOUND)
+            add_executable(snx-test-3ds-fs 3ds_fs.c)
+            snx_test_target(snx-test-3ds-fs 11)
+            target_compile_options(snx-test-3ds-fs PRIVATE -UNDEBUG)
+            target_link_libraries(snx-test-3ds-fs PRIVATE snx_ctr_process)
+            add_test(NAME 3ds_filesystem COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/3ds_fs.py" $<TARGET_FILE:snx-test-3ds-fs>)
             add_test(NAME ctr_swipc_validation COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/ctr_swipc.py"
                 $<TARGET_FILE:snx-swipc>)
             add_test(NAME 3ds_driver COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/3ds_driver.py"
@@ -156,6 +161,32 @@ endif()
 
 # Board/GUI-only builds do not configure either AOT runtime or LLVM. Do not
 # create CPU execution tests that link the absent backend targets in that case.
+include("${PROJECT_SOURCE_DIR}/cmake/swipc.cmake")
+# Exercise NX's real FS tree and service adapters even in the independent CTR
+# build. These fixtures supply their own platform/kernel boundary stubs.
+add_executable(snx-test-fs-fixture filesystem_fixture.c)
+snx_test_target(snx-test-fs-fixture 90)
+target_link_libraries(snx-test-fs-fixture PRIVATE scarletnx-common)
+add_library(snx_test_fs_tree OBJECT "${PROJECT_SOURCE_DIR}/src/common/filesystem/tree.c")
+snx_test_target(snx_test_fs_tree 11)
+target_compile_options(snx_test_fs_tree PRIVATE -include "${CMAKE_CURRENT_SOURCE_DIR}/fs_scan_probe.h")
+foreach(suite tree service)
+    add_executable(snx-test-fs-${suite} filesystem_${suite}.c $<TARGET_OBJECTS:snx_test_fs_tree>)
+    snx_test_target(snx-test-fs-${suite} 11)
+    add_test(NAME filesystem_${suite}
+        COMMAND snx-test-fs-fixture $<TARGET_FILE:snx-test-fs-${suite}>)
+endforeach()
+target_compile_options(snx-test-fs-service PRIVATE -Wno-unused-parameter)
+snx_swipc(snx-test-fs-service ROOT "${PROJECT_SOURCE_DIR}/src/nx" FILES hle/services/types.swipc hle/filesystem/fs.swipc)
+add_test(NAME filesystem_raw COMMAND snx-test-fs-fixture $<TARGET_FILE:snx-test-fs-service> raw)
+
+if(UNIX)
+    add_executable(snx-test-data-dir data_dir.c)
+    snx_test_target(snx-test-data-dir 90)
+    target_compile_options(snx-test-data-dir PRIVATE -UNDEBUG)
+    target_link_libraries(snx-test-data-dir PRIVATE scarletnx-common)
+    add_test(NAME data_dir COMMAND snx-test-data-dir)
+endif()
 if(NOT SNX_BUILD_NX AND NOT SNX_BUILD_GNUABI)
     include(architecture.cmake)
     return()
@@ -435,12 +466,6 @@ snx_test_target(snx-test-driver 90)
 target_link_libraries(snx-test-driver PRIVATE snx_test_common)
 add_test(NAME driver_workflow COMMAND snx-test-driver)
 set_tests_properties(driver_workflow PROPERTIES TIMEOUT 60)
-if(UNIX)
-    add_executable(snx-test-data-dir data_dir.c)
-    snx_test_target(snx-test-data-dir 90)
-    target_link_libraries(snx-test-data-dir PRIVATE scarletnx-common)
-    add_test(NAME data_dir COMMAND snx-test-data-dir)
-endif()
 
 if(UNIX)
     add_executable(snx-test-gdbstub gdbstub.c "${PROJECT_SOURCE_DIR}/src/nx/runtime/gdbstub.c")
@@ -643,26 +668,6 @@ if(UNIX)
     snx_test_target(snx-test-kernel-cores 11)
     add_test(NAME kernel_cores COMMAND snx-test-kernel-cores)
 endif()
-
-add_executable(snx-test-fs-fixture filesystem_fixture.c)
-snx_test_target(snx-test-fs-fixture 90)
-target_link_libraries(snx-test-fs-fixture PRIVATE snx_test_common)
-
-add_library(snx_test_fs_tree OBJECT "${PROJECT_SOURCE_DIR}/src/nx/hle/filesystem/fs_tree.c")
-snx_test_target(snx_test_fs_tree 11)
-target_compile_options(snx_test_fs_tree PRIVATE -include "${CMAKE_CURRENT_SOURCE_DIR}/fs_scan_probe.h")
-
-foreach(suite tree service)
-    add_executable(snx-test-fs-${suite} filesystem_${suite}.c $<TARGET_OBJECTS:snx_test_fs_tree>)
-    snx_test_target(snx-test-fs-${suite} 11)
-    add_test(NAME filesystem_${suite}
-        COMMAND snx-test-fs-fixture $<TARGET_FILE:snx-test-fs-${suite}>)
-endforeach()
-target_compile_options(snx-test-fs-service PRIVATE -Wno-unused-parameter)
-snx_swipc(snx-test-fs-service ROOT "${PROJECT_SOURCE_DIR}/src/nx" FILES hle/services/types.swipc
-          hle/filesystem/fs.swipc)
-add_test(NAME filesystem_raw
-    COMMAND snx-test-fs-fixture $<TARGET_FILE:snx-test-fs-service> raw)
 
 if(UNIX)
     add_executable(snx-test-memory memory_accounting.c

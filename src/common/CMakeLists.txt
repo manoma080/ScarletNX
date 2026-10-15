@@ -18,6 +18,15 @@ else()
     target_link_libraries(scarletnx-common PUBLIC m)
 endif()
 
+# The same indexed host filesystem and shared immutable file views serve NX
+# and CTR. No guest ABI or runtime/platform dependency enters this target.
+add_library(scarletnx-filesystem STATIC filesystem/tree.c filesystem/host.c)
+target_include_directories(scarletnx-filesystem PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
+set_target_properties(scarletnx-filesystem PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON POSITION_INDEPENDENT_CODE ON)
+target_compile_definitions(scarletnx-filesystem PRIVATE _GNU_SOURCE _FILE_OFFSET_BITS=64 _CRT_SECURE_NO_WARNINGS)
+target_compile_options(scarletnx-filesystem PRIVATE -Wall -Wextra -Werror=missing-prototypes)
+target_link_libraries(scarletnx-filesystem PUBLIC Threads::Threads)
+
 # The emulated network stack (network/net.h), shared by nx's bsd and sfdnsres and the GNU ABI's socket syscalls. A
 # library of its own so the C90 tools don't link Winsock
 add_library(scarletnx-net STATIC network/net.c network/net_icmp.c network/net_event.c network/net_dns.c

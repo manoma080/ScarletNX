@@ -6,6 +6,7 @@
 #include "runtime/internal.h"
 #include "services/srv.swipc.h"
 #include "services/fs.h"
+#include "services/file.h"
 #include "services/apt.h"
 #include "services/ptm.swipc.h"
 #include "services/hid.swipc.h"
@@ -90,15 +91,22 @@ static unsigned translation(const SnxCtrIpc* c, uint32_t normal, uint32_t transl
         if (d & 8) {
             if ((d & 15) != 10 && (d & 15) != 12 && (d & 15) != 14) return WIRE_BAD;
             payload = 1;
-            unsupported = true;
+            unsupported =
+                !(c->process->objects[c->object].type == CTR_OBJ_FILE && c->in[0] == 0x080200c2 && (d & 15) == 12) ||
+                unsupported;
         } else if ((d & 1023) == 2 || (d & 15) == 4 || (d & 15) == 6) {
             payload = 1;
-            /* Only the explicitly checked APT utility / absent-SD commands
+            /* Only the explicitly checked APT utility / narrow FS commands
                accept incoming static buffers. Handlers preflight ID, length
                and whole RAM ranges. Other static/PXI/mapped transfers stop. */
-            uint32_t service = c->process->objects[c->object].data.session.service;
+            uint32_t service = c->process->objects[c->object].type == CTR_OBJ_SESSION
+                                   ? c->process->objects[c->object].data.session.service
+                                   : SNX_CTR_SERVICE_FILE;
             bool supported = (service == SNX_CTR_SERVICE_APT && c->in[0] == 0x004b00c2 && (d & 0x3fff) == 0x402) ||
-                             (service == SNX_CTR_SERVICE_FS && c->in[0] == 0x080c00c2 && d == 0x4002);
+                             (service == SNX_CTR_SERVICE_FS && c->in[0] == 0x080c00c2 && d == 0x4002) ||
+                             (service == SNX_CTR_SERVICE_FS && c->in[0] == 0x080201c2 && d == 0x30002) ||
+                             (service == SNX_CTR_SERVICE_FS && c->in[0] == 0x08030204 &&
+                              ((d & 0x3fff) == 2 || (d & 0x3fff) == 0x802));
             unsupported = unsupported || !supported;
         } else if (d == 0x20) {
             payload = 1;
@@ -115,7 +123,7 @@ static unsigned translation(const SnxCtrIpc* c, uint32_t normal, uint32_t transl
 SnxCtrSvcResult snx_ctr_ipc_send(SnxCtrProcess* p, uint32_t handle, uint32_t* result) {
     *result = 0;
     uint32_t id = snx_ctr_handle_object(p, handle);
-    if (!id || p->objects[id].type != CTR_OBJ_SESSION) {
+    if (!id || (p->objects[id].type != CTR_OBJ_SESSION && p->objects[id].type != CTR_OBJ_FILE)) {
         *result = 0xd8e007f7u;
         return SNX_CTR_SVC_RETURN;
     }
@@ -135,7 +143,8 @@ SnxCtrSvcResult snx_ctr_ipc_send(SnxCtrProcess* p, uint32_t handle, uint32_t* re
     SnxCtrIpc c = {.process = p, .object = id, .caller_pid = CTR_PROCESS_ID};
     for (unsigned i = 0; i < SNX_CTR_IPC_WORDS; ++i) c.in[i] = load32(bytes + i * 4);
     p->last_ipc_header = c.in[0];
-    p->last_ipc_service = p->objects[id].data.session.service;
+    p->last_ipc_service =
+        p->objects[id].type == CTR_OBJ_FILE ? SNX_CTR_SERVICE_FILE : p->objects[id].data.session.service;
     uint32_t normal = (c.in[0] >> 6) & 63, translated = c.in[0] & 63;
     if ((c.in[0] & 0xf000) || 1 + normal + translated > SNX_CTR_IPC_WORDS) {
         *result = SNX_CTR_IPC_BAD_DESCRIPTOR;
@@ -150,6 +159,7 @@ SnxCtrSvcResult snx_ctr_ipc_send(SnxCtrProcess* p, uint32_t handle, uint32_t* re
     switch (p->last_ipc_service) {
         case SNX_CTR_SERVICE_SRV: snx_ctr_srv_dispatch(&c); break;
         case SNX_CTR_SERVICE_FS: snx_ctr_fs_dispatch(&c); break;
+        case SNX_CTR_SERVICE_FILE: snx_ctr_file_dispatch(&c); break;
         case SNX_CTR_SERVICE_APT: snx_ctr_apt_dispatch(&c); break;
         case SNX_CTR_SERVICE_PTM: snx_ctr_ptm_dispatch(&c); break;
         case SNX_CTR_SERVICE_HID: snx_ctr_hid_dispatch(&c); break;

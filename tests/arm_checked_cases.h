@@ -25,6 +25,9 @@
     F(exclusive_double, 0, 1, 1, 0x1000, 0xe1b02f9f, 0xe2822001, 0xe1a04f92)                                           \
     F(exclusive_clear, 0, 1, 1, 0x1000, 0xe1902f9f, 0xf57ff01f, 0xe1803f91)                                            \
     F(exclusive_local_store, 0, 1, 1, 0x1000, 0xe1902f9f, 0xe5801000, 0xe1803f91)                                      \
+    F(vfp_load, 0, 1, 1, 0x1000, 0xed900b00)                                                                           \
+    F(vfp_store, 0, 1, 1, 0x1000, 0xed800b00)                                                                          \
+    F(vfp_multi, 0, 1, 1, 0x1000, 0xecb00b10)                                                                          \
     F(vfp, 0, 1, 1, 0x1000, 0xee300a01)                                                                                \
     F(neon, 0, 1, 1, 0x1000, 0xf2010802)                                                                               \
     F(condstore, 0, 1, 1, 0x1000, 0x05801000)                                                                          \

@@ -71,6 +71,14 @@ int main(void) {
     for (unsigned model = 0; model < 2; ++model) {
         SnxCtrProcess* p = snx_ctr_process_new(&image, (SnxCtrModel)model);
         assert(p);
+        assert(snx_ctr_check_ram(p->space, 0x1ff81000, 4096, SNX_CTR_READ) == SNX_CTR_MEM_OK);
+        assert(snx_ctr_check_ram(p->space, 0x1ff81000, 1, SNX_CTR_WRITE) == SNX_CTR_MEM_PERMISSION);
+        uint64_t utc = (uint64_t)word(p, 0x1ff81020) | (uint64_t)word(p, 0x1ff81024) << 32;
+        assert(utc >= UINT64_C(2208988800000) && word(p, 0x1ff81030) == 268111856);
+        assert(snx_ctr_svc(p, 0x28) == SNX_CTR_SVC_RETURN);
+        uint64_t ticks = (uint64_t)p->cpu.state.cpu.r[0] | (uint64_t)p->cpu.state.cpu.r[1] << 32;
+        assert(snx_ctr_svc(p, 0x28) == SNX_CTR_SVC_RETURN);
+        assert(((uint64_t)p->cpu.state.cpu.r[0] | (uint64_t)p->cpu.state.cpu.r[1] << 32) >= ticks);
         uint32_t* r = p->cpu.state.cpu.r;
         assert(!snx_ctr_kernel_blocked(p));
         unsigned permissions;

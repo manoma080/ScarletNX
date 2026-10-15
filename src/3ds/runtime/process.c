@@ -3,6 +3,8 @@
 #include "internal.h"
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
+#include "common.h"
 static bool map(SnxCtrProcess* p, uint32_t va, uint32_t size, unsigned permissions) {
     if (!size) return true;
     if ((uint64_t)p->physical_next + size > p->physical_end ||
@@ -14,6 +16,7 @@ static bool map(SnxCtrProcess* p, uint32_t va, uint32_t size, unsigned permissio
 }
 void snx_ctr_process_free(SnxCtrProcess* p) {
     if (!p) return;
+    snx_ctr_romfs_free(p->romfs);
     snx_ctr_space_free(p->space);
     snx_ctr_memory_free(p->memory);
     free(p);
@@ -78,10 +81,33 @@ SnxCtrProcess* snx_ctr_process_new(const SnxCtrImage* image, SnxCtrModel model) 
     if (snx_ctr_write_ram(p->space, CTR_CONFIG, config, sizeof config) != SNX_CTR_MEM_OK ||
         snx_ctr_protect(p->space, CTR_CONFIG, 4096, SNX_CTR_READ) != SNX_CTR_MEM_OK)
         goto fail;
+    /* Shared-page time snapshot (Azahar shared_page.h): UTC milliseconds since
+       1900 plus an ARM11 base-clock reference. Clients interpolate via SVC 28.
+       Host-paced monotonic ticks, not an instruction/cycle-accuracy claim. */
+    struct timespec now;
+    if (!timespec_get(&now, TIME_UTC) || now.tv_sec < 0 ||
+        (uint64_t)now.tv_sec > (UINT64_MAX - 999) / 1000 - UINT64_C(2208988800))
+        goto fail;
+    p->clock_origin = snx_seconds();
+    uint64_t rtc = ((uint64_t)now.tv_sec + UINT64_C(2208988800)) * 1000 + (uint64_t)now.tv_nsec / 1000000;
+    unsigned char shared[4096] = {0};
+    for (unsigned bank = 0; bank < 2; ++bank) {
+        for (unsigned i = 0; i < 8; ++i) {
+            shared[0x20 + bank * 0x20 + i] = (unsigned char)(rtc >> (i * 8));
+            shared[0x30 + bank * 0x20 + i] = (unsigned char)(UINT64_C(268111856) >> (i * 8));
+        }
+    }
+    if (snx_ctr_map(p->space, 0x1ff81000, 0x1ff81000, 4096, 3) != SNX_CTR_MEM_OK ||
+        snx_ctr_write_ram(p->space, 0x1ff81000, shared, sizeof shared) != SNX_CTR_MEM_OK ||
+        snx_ctr_protect(p->space, 0x1ff81000, 4096, SNX_CTR_READ) != SNX_CTR_MEM_OK)
+        goto fail;
     return p;
 fail:
     snx_ctr_process_free(p);
     return NULL;
+}
+bool snx_ctr_process_mount_fs(SnxCtrProcess* p, const char* directory) {
+    return p && !p->romfs && snx_ctr_romfs_open(directory, &p->romfs);
 }
 SnxArmCPU* snx_ctr_process_cpu(SnxCtrProcess* p) { return p ? &p->cpu.state.cpu : NULL; }
 SnxCtrAddressSpace* snx_ctr_process_space(SnxCtrProcess* p) { return p ? p->space : NULL; }

@@ -48,9 +48,17 @@ Invalid option versions/enums are refused without modifying the LLVM module.
 
 The ARM11 profile implements a **conservative ARMv6K integer subset**, rejecting
 MOVW/MOVT, MLS, divide, RBIT, bitfields, ARMv7 barrier encodings, acquire/release,
-NEON, VFPv3/v4 and D16..D31. It recognizes the ARM11 CP15 barrier forms. VFPv2
-recognition currently exits with `BACKEND_UNSUPPORTED`: VFPv2 short vectors are
-not implemented by the A57 FP helpers. This is not a complete ARM11 ISA model.
+NEON, VFPv3/v4 and D16..D31. It recognizes the ARM11 CP15 barrier forms.
+Scalar VFPv2 F32/F64 arithmetic, non-fused multiply/accumulate, compares,
+conversions, register/status transfers and up-to-64-byte memory transfers are
+implemented. Arithmetic uses the shared raw-bit integer FP primitives, not host
+floating point or ARMv8 fused replacements. LEN/STRIDE and exception enables must
+be zero for arithmetic. FPSCR writes outside NZCV, rounding mode, DN/FZ and
+cumulative exceptions stop before mutation; short vectors, traps, legacy
+FLDMX/FSTMX format words and larger transfers remain explicitly unsupported.
+Checked VFP memory operations are aligned to four bytes and staged as one
+RAM-only transaction before register/base writeback. This is not complete VFPv2
+or a complete ARM11 ISA model; A57 checked vector operations remain unsupported.
 
 ARM11 ALU writes to PC remain in ARM state. Its Thumb BL prefix and BL/BLX suffix
 are **separately executable 16-bit instructions**, with the original signed
@@ -72,7 +80,7 @@ A fault reports `PREFETCH_ABORT`; a mismatch reports `CODE_CHANGED` before the
 stale instruction executes. These exits must return to the dispatcher. There
 is no automatic recompilation, block discovery or executable-module loader.
 
-Integer transfers use bounded little-endian transaction buffers. Reads complete
+Integer and supported ARM11 VFP transfers use bounded little-endian transaction buffers. Reads complete
 before register updates; stores commit before base/SP writeback. Paired and
 multiword accesses are whole-range RAM transactions and carry `ACCESS_MULTI`,
 which callbacks must reject on MMIO. This intentionally preflights all bytes,
