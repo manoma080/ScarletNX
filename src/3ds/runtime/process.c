@@ -86,7 +86,13 @@ SnxCtrProcess* snx_ctr_process_new(const SnxCtrImage* image, SnxCtrModel model) 
        1900 plus an ARM11 base-clock reference. Clients interpolate via SVC 28.
        Host-paced monotonic ticks, not an instruction/cycle-accuracy claim. */
     struct timespec now;
-    if (!timespec_get(&now, TIME_UTC) || now.tv_sec < 0 ||
+    if (
+#if defined(__ANDROID__) && __ANDROID_API__ < 29
+        clock_gettime(CLOCK_REALTIME, &now)
+#else
+        !timespec_get(&now, TIME_UTC)
+#endif
+        || now.tv_sec < 0 ||
         (uint64_t)now.tv_sec > (UINT64_MAX - 999) / 1000 - UINT64_C(2208988800))
         goto fail;
     p->clock_origin = snx_seconds();
