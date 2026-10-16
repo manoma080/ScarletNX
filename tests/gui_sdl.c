@@ -453,7 +453,7 @@ int main(int argc, char** argv) {
     assert(app.menu.selected == GUI_SWITCH && app.menu.view == GUI_LOAD_OPTIONS);
     render(&app);
     colored_text(&app, menu_row(&app, GUI_SWITCH), "- Load Switch NSP/XCI/NRO", pink);
-    colored_text_at(&app, 3, menu_row(&app, GUI_SWITCH) + 1, "-> Select via drag and drop", yellow);
+    colored_text_at(&app, 3, menu_row(&app, GUI_SWITCH) + 1, "-> Select a file", yellow);
     /* Leaving a submenu, including crossing another main option, must neither
        close it nor move its rows or change its activated owner. */
     int exit_row = menu_row(&app, GUI_EXIT);
@@ -495,12 +495,12 @@ int main(int argc, char** argv) {
     key(&app, SDLK_ESCAPE);
     assert(app.menu.view == GUI_LOAD_NONE);
     key(&app, SDLK_RETURN);
-    key(&app, SDLK_RETURN); /* activate Select via drag and drop */
+    key(&app, SDLK_RETURN); /* activate Select a file */
     render(&app);
-    colored_text_at(&app, 3, menu_row(&app, GUI_SWITCH) + 1, "-> Select via drag and drop", pink);
+    colored_text_at(&app, 3, menu_row(&app, GUI_SWITCH) + 1, "-> Select a file", pink);
     mouse(&app, 4, menu_row(&app, GUI_SWITCH) + 2, false);
     render(&app);
-    colored_text_at(&app, 3, menu_row(&app, GUI_SWITCH) + 1, "-> Select via drag and drop", pink);
+    colored_text_at(&app, 3, menu_row(&app, GUI_SWITCH) + 1, "-> Select a file", pink);
     colored_text_at(&app, 3, menu_row(&app, GUI_SWITCH) + 2, "-> Select file from games/ instead", yellow);
     mouse(&app, 2, menu_row(&app, GUI_LINUX), false);
     assert(app.menu.active == GUI_SWITCH && app.menu.selected == GUI_LINUX && app.menu.view == GUI_LOAD_DROP);

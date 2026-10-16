@@ -28,18 +28,19 @@ build of a detached checkout outside CI says `detached`, and both read `unknown`
   and anchored to its activated parent. ESC goes back; explicitly activating a
   different main item replaces/closes the submenu.
 - Selecting **Load Switch NSP/XCI/NRO**, **Load Linux ARM ELF** or **Load 3DS CIA** keeps that item
-  visible and opens two selectable options underneath it: **Select via drag and drop**
+  visible and opens two selectable options underneath it: **Select a file**
   and **Select file from games/ instead**.
-- Activate **Select via drag and drop** to wait for a file. SDL file drops and text drops
-  are supported. Ctrl+V also accepts a clipboard path while waiting. ESC returns to
-  the two options, and another ESC returns to the main menu.
+- Activate **Select a file** to wait for a file. Enter opens the system's file dialog (on
+  Linux the desktop's, else zenity's); SDL file drops and text drops work too, and Ctrl+V
+  accepts a clipboard path. ESC returns to the two options, and another ESC returns to the
+  main menu.
 - **Load 3DS CIA** uses `scarletnx-3ds`. Its `games/` browser lists CIA inputs,
   not host executables. The driver extracts supported decrypted application CIAs,
   then returns an explicit error because ARM11 AOT/execution is still pending.
   Existing extraction directories are refused rather than treated as cache hits.
   See [3DS port](3DS.md) for limits and extract-only usage.
 - **Setup device keys**, immediately after the three load entries, prompts you to
-  drag and drop `prod.keys` (or paste its path with Ctrl+V); a blinking
+  pick `prod.keys` with Enter, drop it, or paste its path with Ctrl+V; a blinking
   **[ Drop prod.keys here ]** waits in the middle of the screen (the theme's
   `[prompt]`). It installs the file to `~/.switch/prod.keys`, or
   `%USERPROFILE%\.switch\prod.keys` on Windows; an installed copy on Linux puts it in its

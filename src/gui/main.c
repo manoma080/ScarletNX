@@ -96,7 +96,8 @@ static const char* const items[] = {"Load Switch NSP/XCI/NRO",
                                     "Text size",
                                     "Share log",
                                     "Exit"};
-/* what the screens say to press: a phone has a finger, the back button and the system's file picker, nothing to drop */
+/* what the screens say to press: a phone has a finger, the back button and the system's file picker, nothing to drop;
+   a computer has the picker too (Enter), and drops */
 #ifdef SDL_PLATFORM_ANDROID
 static const char* const load_labels[] = {"-> Select a file", "-> Select file from games/ instead"};
 #define SAY_MENU       "Tap: select. Back: go back."
@@ -113,12 +114,12 @@ static const char* const load_labels[] = {"-> Select a file", "-> Select file fr
 #define SAY_LOG_FAILED "The log could not be saved: allow the app access to files."
 #define SAY_EDITOR     "Tap a key to change it or type it. Back: go back."
 #else
-static const char* const load_labels[] = {"-> Select via drag and drop", "-> Select file from games/ instead"};
+static const char* const load_labels[] = {"-> Select a file", "-> Select file from games/ instead"};
 #define SAY_MENU       "Arrows/mouse: move. Space/Enter/click: select."
 #define SAY_LOAD       "Choose a load option. ESC: back."
-#define SAY_DROP       "Drop a file now. Ctrl+V: paste a path. ESC: back."
+#define SAY_DROP       "Enter: pick a file, or drop one. Ctrl+V: paste a path. ESC: back."
 #define SAY_GAMES      "Up/Down: select. Enter/Space: open. Left/Right or PgUp/PgDown: page."
-#define SAY_KEYS       "Setup device keys: drag and drop to this window"
+#define SAY_KEYS       "Setup device keys: Enter to pick prod.keys, or drop it on this window"
 #define SAY_KEYS_HOW   "Ctrl+V: paste a path. ESC: back."
 #define SAY_KEYS_WAIT  "Drop prod.keys here"
 #define SAY_DONE       "Press [ESC] to return to menu"
@@ -1436,8 +1437,8 @@ static void drop(App* app, const char* value, bool text_drop) {
         launch(app, absolute, false);
     }
 }
-#ifdef SDL_PLATFORM_ANDROID
-/* the picker answers on its own thread: the choice comes back to event() as an app->picked event */
+/* the system's file picker (on Linux the desktop's portal, else zenity), which answers on its own thread: the choice
+   comes back to event() as an app->picked event */
 static void SDLCALL picker_done(void* userdata, const char* const* files, int filter) {
     SDL_Event e;
     (void)filter;
@@ -1450,7 +1451,6 @@ static void open_picker(App* app) {
     if (!app->picked) app->picked = SDL_RegisterEvents(1);
     if (app->picked) SDL_ShowOpenFileDialog(picker_done, &app->picked, app->window, NULL, 0, NULL, false);
 }
-#endif
 /* the last max bytes of a file, as text with only ASCII (what Java takes as a string from any log), or "" */
 static char* log_tail(const char* path, size_t max) {
     size_t size = 0, i;
@@ -1578,10 +1578,10 @@ static void menu_key(App* app, GuiKey key) {
     gui_menu_key(&app->menu, key);
 #ifdef SDL_PLATFORM_ANDROID
     if (app->menu.fullscreen != fullscreen) SDL_SetWindowFullscreen(app->window, app->menu.fullscreen); /* as a game */
-    /* the screen opens first, as on a computer, so what happens shows there; a select on it opens the picker */
+#endif
+    /* the screen opens first, so what happens shows there; a select on it opens the picker */
     if (key == GUI_SELECT && app->menu.view == before && (before == GUI_LOAD_DROP || before == GUI_LOAD_KEYS))
         open_picker(app);
-#endif
     if (app->menu.recent_open) {
         int index = app->menu.recent_open - 1;
         app->menu.recent_open = 0;
