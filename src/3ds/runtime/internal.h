@@ -7,6 +7,8 @@
 #include "services/romfs.h"
 #define CTR_HANDLES        256u
 #define CTR_OBJECTS        256u
+#define CTR_GSP_THREADS    4u
+#define CTR_GSP_REGS       1024u
 #define CTR_PHYS_BASE      0x20000000u
 #define CTR_CONFIG         0x1ff80000u
 #define CTR_HEAP           0x08000000u
@@ -44,7 +46,7 @@ typedef struct {
     uint32_t type, refs;
     union {
         struct {
-            uint32_t service, client_pid, sdk_version;
+            uint32_t service, client_pid, sdk_version, gsp_thread;
         } session;
         CtrThread thread;
         struct {
@@ -62,14 +64,33 @@ typedef struct {
     } data;
 } CtrObject;
 typedef struct {
+    uint32_t va, size, object;
+} CtrSharedMap;
+typedef struct {
     uint32_t generation, object;
 } CtrHandle;
+/* gsp::Gpu model: one shared GX command/interrupt block, a bounded GX/LCD
+   register file, per-registration relay threads and latched buffer swaps.
+   Display timing is host-paced 60 Hz, not cycle accurate. */
+typedef struct {
+    uint32_t shared_object;              /* CTR_OBJ_SHARED backing the 0x1000 block */
+    uint32_t thread_mask, rights_thread; /* rights_thread 0xffffffff: no holder */
+    uint32_t first_registration;         /* one genuine FirstInitialization reply */
+    uint32_t lcd_black, frame_seq, vblank_count;
+    uint32_t event_object[CTR_GSP_THREADS]; /* registered interrupt events (retained) */
+    uint32_t relay_flags[CTR_GSP_THREADS];
+    uint32_t fb_pending[2]; /* a SetBufferSwap latched since the last present */
+    uint32_t fb_screen[2][7];
+    uint64_t next_vblank_ns; /* host monotonic deadline, 60 Hz */
+    uint32_t* regs;          /* bounded GX/LCD register file, CTR_GSP_REGS words */
+} SnxCtrGsp;
 struct SnxCtrProcess {
     SnxCtrRomfs* romfs; /* runtime-owned immutable host filesystem view */
     SnxCtrMemory* memory;
     SnxCtrAddressSpace* space;
     SnxCtrCpu cpu;
-    uint32_t physical_next, physical_end, app_limit;
+    uint32_t physical_next, physical_end, app_limit, physical_shared;
+    CtrSharedMap shared_maps[8]; /* MapMemoryBlock registrations, kernel ordered */
     CtrObject objects[CTR_OBJECTS];
     CtrHandle handles[CTR_HANDLES];
     uint32_t last_svc, current_thread;
@@ -81,6 +102,7 @@ struct SnxCtrProcess {
     double clock_origin;   /* host monotonic origin for the base ARM11 tick domain */
     CtrSelfArchive self_archives[CTR_SELF_ARCHIVES];
     uint64_t archive_sequence;
+    SnxCtrGsp gsp;
     uint64_t svc_count;
     unsigned char physical_owner[];
 };
@@ -96,6 +118,9 @@ uint32_t snx_ctr_handle_add(SnxCtrProcess* p, uint32_t object, uint32_t* out);
 uint32_t snx_ctr_object_create(SnxCtrProcess* p, uint32_t type, uint32_t* out);
 uint32_t snx_ctr_handle_close(SnxCtrProcess* p, uint32_t handle);
 uint32_t snx_ctr_session_create(SnxCtrProcess* p, uint32_t service, uint32_t* out);
+/* HLE shared pages live past the application pool but inside board FCRAM;
+   each call reserves the next page-aligned block, or returns 0. */
+uint32_t snx_ctr_shared_pages(SnxCtrProcess* p, uint32_t size);
 uint32_t snx_ctr_named_connect(SnxCtrProcess* p, uint32_t name_address, uint32_t* out);
 SnxCtrSvcResult snx_ctr_ipc_send(SnxCtrProcess* p, uint32_t handle, uint32_t* transport_result);
 /* SVC helpers use only RAM transactions, never MMIO or a flat pointer. */

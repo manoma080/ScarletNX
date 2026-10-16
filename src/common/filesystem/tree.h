@@ -53,6 +53,9 @@ FsTreeResult fs_tree_lookup(FsTree* tree, FsNode* scope, const char* path, FsNod
 FsTreeResult fs_tree_path(FsTree* tree, const FsNode* node, char* out, size_t capacity);
 /* Caller holds lock and enforces rights. Unbuffered, keeping separately opened handles coherent. */
 FILE* fs_tree_open(FsTree* tree, FsNode* node, const char* mode);
+/* Host modification time (UTC Unix milliseconds) of an indexed node. Caller
+   holds lock. Virtual nodes have no host backing and return FS_TREE_INVALID. */
+FsTreeResult fs_tree_mtime(FsTree* tree, const FsNode* node, uint64_t* unix_ms);
 FsTreeResult fs_tree_mkdirs(FsTree* tree, const char* relative_path, FsNode** out);
 FsTreeResult fs_tree_create(FsTree* tree, FsNode* scope, const char* path, int is_dir, uint64_t size, FsNode** out);
 FsTreeResult fs_tree_remove(FsTree* tree, FsNode* scope, const char* path, int is_dir, int recursive, int keep);

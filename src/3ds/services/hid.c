@@ -14,6 +14,8 @@ static uint32_t snx_ctr_hid_GetIPCHandles(SnxCtrIpc* c, uint32_t* memory, uint32
         if (result) return result; /* generated output cleanup is transactional */
     }
     if (!p->hid_objects[0]) {
+        uint32_t physical = snx_ctr_shared_pages(p, 4096);
+        if (!physical) return 0xd86007f3u;
         for (unsigned i = 0; i < 6; ++i) {
             p->hid_objects[i] = snx_ctr_handle_object(p, *out[i]);
             ++p->objects[p->hid_objects[i]].refs;
@@ -21,7 +23,7 @@ static uint32_t snx_ctr_hid_GetIPCHandles(SnxCtrIpc* c, uint32_t* memory, uint32
         /* One HLE system-pool page, outside the application pool/accounting.
            Board RAM is zero-initialized: no samples/events have been produced. */
         CtrObject* shared = &p->objects[p->hid_objects[0]];
-        shared->data.shared.physical = p->physical_end;
+        shared->data.shared.physical = physical;
         shared->data.shared.size = 4096;
         shared->data.shared.permissions = SNX_CTR_READ;
     }

@@ -7,6 +7,7 @@
 #include "ctr_kernel.h"
 #include "runtime/internal.h"
 #include <stdlib.h>
+#include "services/gsp.h"
 #include <string.h>
 #include "common.h"
 
@@ -81,6 +82,30 @@ static bool available(SnxCtrProcess* p, uint32_t va, uint32_t size) {
     for (uint32_t off = 0; off < size; off += 4096)
         if (snx_ctr_query(p->space, va + off, NULL, NULL) == SNX_CTR_MEM_OK) return false;
     return true;
+}
+/* QueryMemory's coarse class for one page: 0 free, 2 IO, 3 static, 4 code,
+   5 private RAM, 6 a kernel-registered shared block. Permissions come from
+   the actual mapping. */
+static void query_class(SnxCtrProcess* p, uint32_t page, uint32_t* state, uint32_t* perm) {
+    *state = 0;
+    *perm = 0;
+    uint32_t pa = 0;
+    unsigned perms = 0;
+    SnxCtrMemResult result = snx_ctr_query(p->space, page, &pa, &perms);
+    if (result == SNX_CTR_MEM_UNMAPPED) return;
+    if (result != SNX_CTR_MEM_OK) {
+        *state = 2;
+        return;
+    }
+    *perm = perms;
+    for (unsigned i = 0; i < 8; ++i) {
+        CtrSharedMap* m = &p->shared_maps[i];
+        if (m->object && page >= m->va && (uint64_t)page < (uint64_t)m->va + m->size) {
+            *state = 6;
+            return;
+        }
+    }
+    *state = pa >= CTR_PHYS_BASE ? (perms & 4 ? 4u : perms & 2 ? 5u : 3u) : 2u;
 }
 /* Heap/linear commit, free and protect. MAP/UNMAP aliases are deliberately not
    implemented; no mappings, ownership or accounting change on rejected calls. */
@@ -287,6 +312,9 @@ static SnxCtrSvcResult wait_one(SnxCtrProcess* p, uint32_t* r) {
         r[0] = OK;
         return SNX_CTR_SVC_RETURN;
     }
+    /* Waits on the GSP interrupt event complete at real host-paced vblank
+       deliveries, not at arbitrary dispatch calls. */
+    if (o->type == CTR_OBJ_EVENT && snx_ctr_gsp_event(p, id)) return snx_ctr_gsp_wait(p, id, r);
     if (o->type == CTR_OBJ_THREAD && o->data.thread.dead) {
         r[0] = OK;
         return SNX_CTR_SVC_RETURN;
@@ -329,6 +357,42 @@ SnxCtrSvcResult snx_ctr_svc(SnxCtrProcess* p, uint32_t number) {
             uint32_t result = snx_ctr_kernel_memory(p, r[0], r[1], r[2], r[3], r[4], &out);
             r[0] = result;
             r[1] = out;
+            return SNX_CTR_SVC_RETURN;
+        }
+        case 0x02: {
+            /* QueryMemory: the real region containing r2. Coarse state classes
+               derive from the actual mapping: free/shared/private/code/static/
+               IO. Region walks stay inside the user VA window [0, 0x20000000). */
+            if ((r[0] | r[1] | r[2]) & 3) {
+                r[0] = MISALIGNED_ADDRESS;
+                return SNX_CTR_SVC_RETURN;
+            }
+            uint32_t base = r[2] & ~4095u, end = base + 4096, first = 0, first_perm = 0;
+            unsigned char info[16] = {0}, page_info[4] = {0};
+            query_class(p, base, &first, &first_perm);
+            while (base >= 4096) {
+                uint32_t state = 0, perm = 0;
+                query_class(p, base - 4096, &state, &perm);
+                if (state != first || perm != first_perm) break;
+                base -= 4096;
+            }
+            while (end < 0x20000000u) {
+                uint32_t state = 0, perm = 0;
+                query_class(p, end, &state, &perm);
+                if (state != first || perm != first_perm) break;
+                end += 4096;
+            }
+            for (unsigned i = 0; i < 4; ++i) {
+                info[i] = (unsigned char)(base >> (i * 8));
+                info[4 + i] = (unsigned char)((end - base) >> (i * 8));
+                info[8 + i] = (unsigned char)(first_perm >> (i * 8));
+                info[12 + i] = (unsigned char)(first >> (i * 8));
+            }
+            if (snx_ctr_write_ram(p->space, r[0], info, sizeof info) != SNX_CTR_MEM_OK ||
+                snx_ctr_write_ram(p->space, r[1], page_info, sizeof page_info) != SNX_CTR_MEM_OK)
+                r[0] = INVALID_ADDRESS;
+            else
+                r[0] = OK;
             return SNX_CTR_SVC_RETURN;
         }
         case 0x03: return SNX_CTR_SVC_EXIT;
@@ -390,14 +454,27 @@ SnxCtrSvcResult snx_ctr_svc(SnxCtrProcess* p, uint32_t number) {
                 r[0] = INVALID_HANDLE;
             else {
                 CtrObject* o = &p->objects[id];
-                if ((r[1] & 4095) || r[1] < 0x10000000 || (uint64_t)r[1] + o->data.shared.size > 0x14000000)
+                if ((r[1] & 4095) || r[1] < 0x10000000 || (uint64_t)r[1] + o->data.shared.size > 0x1f800000)
                     r[0] = INVALID_ADDRESS;
                 else if (r[2] != o->data.shared.permissions || (r[3] != 0 && r[3] != 0x10000000))
                     return SNX_CTR_SVC_UNSUPPORTED;
                 else {
+                    unsigned slot = 8, replace = 8;
+                    for (unsigned i = 0; i < 8; ++i) {
+                        if (p->shared_maps[i].object == id) replace = i;
+                        if (slot == 8 && !p->shared_maps[i].object) slot = i;
+                    }
+                    if (replace == 8 && slot == 8) {
+                        r[0] = OUT_OF_MEMORY;
+                        return SNX_CTR_SVC_RETURN;
+                    }
                     SnxCtrMemResult mapped =
                         snx_ctr_map(p->space, r[1], o->data.shared.physical, o->data.shared.size, r[2]);
                     r[0] = mapped == SNX_CTR_MEM_OK ? OK : mapped == SNX_CTR_MEM_NOMEM ? OUT_OF_MEMORY : INVALID_STATE;
+                    if (mapped == SNX_CTR_MEM_OK) {
+                        unsigned slot2 = replace == 8 ? slot : replace;
+                        p->shared_maps[slot2] = (CtrSharedMap){r[1], o->data.shared.size, id};
+                    }
                 }
             }
             return SNX_CTR_SVC_RETURN;

@@ -120,6 +120,11 @@ if(TARGET snx_ctr_board)
             target_compile_options(snx-test-3ds-fs PRIVATE -UNDEBUG)
             target_link_libraries(snx-test-3ds-fs PRIVATE snx_ctr_process)
             add_test(NAME 3ds_filesystem COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/3ds_fs.py" $<TARGET_FILE:snx-test-3ds-fs>)
+            add_executable(snx-test-3ds-gsp 3ds_gsp.c)
+            snx_test_target(snx-test-3ds-gsp 11)
+            target_compile_options(snx-test-3ds-gsp PRIVATE -UNDEBUG)
+            target_link_libraries(snx-test-3ds-gsp PRIVATE snx_ctr_process)
+            add_test(NAME 3ds_gsp_gpu COMMAND snx-test-3ds-gsp "${CMAKE_CURRENT_BINARY_DIR}/gsp-frames")
             add_test(NAME ctr_swipc_validation COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/ctr_swipc.py"
                 $<TARGET_FILE:snx-swipc>)
             add_test(NAME 3ds_driver COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/3ds_driver.py"

@@ -627,6 +627,33 @@ FILE* fs_tree_open(FsTree* tree, FsNode* node, const char* mode) {
     if (file) setvbuf(file, NULL, _IONBF, 0);
     return file;
 }
+/* The backing file's actual host modification time, not a stored timestamp. */
+FsTreeResult fs_tree_mtime(FsTree* tree, const FsNode* node, uint64_t* unix_ms) {
+    char path[FS_TREE_PATH_MAX];
+    if (!node || !unix_ms || node->is_virtual || !belongs_to(tree, node)) return FS_TREE_INVALID;
+    FsTreeResult rc = fs_tree_path(tree, node, path, sizeof path);
+    if (rc) return rc;
+#if defined(_WIN32)
+    WIN32_FILE_ATTRIBUTE_DATA attributes;
+    if (!GetFileAttributesExA(path, GetFileExInfoStandard, &attributes)) return FS_TREE_IO;
+    ULARGE_INTEGER time = {.LowPart = attributes.ftLastWriteTime.dwLowDateTime,
+                           .HighPart = attributes.ftLastWriteTime.dwHighDateTime};
+    /* FILETIME is 100ns since 1601; the Unix epoch is 116444736000000000 of them. */
+    if (time.QuadPart < UINT64_C(116444736000000000)) return FS_TREE_IO;
+    *unix_ms = (time.QuadPart - UINT64_C(116444736000000000)) / 10000;
+#else
+    struct stat st;
+    if (stat(path, &st) || st.st_mtime < 0) return FS_TREE_IO;
+    uint64_t ms = (uint64_t)st.st_mtime * 1000;
+#if defined(__APPLE__)
+    ms += (uint64_t)st.st_mtimespec.tv_nsec / 1000000;
+#else
+    ms += (uint64_t)st.st_mtim.tv_nsec / 1000000;
+#endif
+    *unix_ms = ms;
+#endif
+    return FS_TREE_OK;
+}
 FsTreeResult fs_tree_share(FsTree* tree, FsNode* node, unsigned* shared, unsigned* failed) {
     if (!belongs_to(tree, node)) return FS_TREE_NOTFOUND;
     node->readonly = 1;

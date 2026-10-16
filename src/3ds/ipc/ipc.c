@@ -10,6 +10,7 @@
 #include "services/apt.h"
 #include "services/ptm.swipc.h"
 #include "services/hid.swipc.h"
+#include "services/gsp.h"
 #include <string.h>
 
 static uint32_t load32(const unsigned char* b) {
@@ -60,14 +61,22 @@ void snx_ctr_ipc_output_handle(SnxCtrIpc* c, uint32_t word, uint32_t handle) {
 uint32_t snx_ctr_session_create(SnxCtrProcess* p, uint32_t service, uint32_t* out) {
     *out = 0;
     if (service != SNX_CTR_SERVICE_SRV && service != SNX_CTR_SERVICE_FS && service != SNX_CTR_SERVICE_APT &&
-        service != SNX_CTR_SERVICE_PTM && service != SNX_CTR_SERVICE_HID)
+        service != SNX_CTR_SERVICE_PTM && service != SNX_CTR_SERVICE_HID && service != SNX_CTR_SERVICE_GSP)
         return 0xe0e01bf4u;
     unsigned count = 0;
     for (unsigned i = 1; i < CTR_OBJECTS; ++i)
         if (p->objects[i].type == CTR_OBJ_SESSION && p->objects[i].data.session.service == service) ++count;
-    if (count >= (service == SNX_CTR_SERVICE_SRV ? 64u : service == SNX_CTR_SERVICE_FS ? 32u : 2u)) return 0xd0401834u;
+    if (count >= (service == SNX_CTR_SERVICE_SRV   ? 64u
+                  : service == SNX_CTR_SERVICE_FS  ? 32u
+                  : service == SNX_CTR_SERVICE_GSP ? 2u
+                                                   : 2u))
+        return 0xd0401834u;
     uint32_t result = snx_ctr_object_create(p, CTR_OBJ_SESSION, out);
-    if (!result) p->objects[snx_ctr_handle_object(p, *out)].data.session.service = service;
+    if (!result) {
+        CtrObject* object = &p->objects[snx_ctr_handle_object(p, *out)];
+        object->data.session.service = service;
+        object->data.session.gsp_thread = UINT32_MAX;
+    }
     return result;
 }
 uint32_t snx_ctr_named_connect(SnxCtrProcess* p, uint32_t address, uint32_t* out) {
@@ -82,7 +91,7 @@ uint32_t snx_ctr_named_connect(SnxCtrProcess* p, uint32_t address, uint32_t* out
     return 0xe0e0181eu;
 }
 enum { WIRE_OK, WIRE_BAD, WIRE_UNSUPPORTED };
-static unsigned translation(const SnxCtrIpc* c, uint32_t normal, uint32_t translated) {
+static unsigned translation(SnxCtrIpc* c, uint32_t normal, uint32_t translated) {
     uint32_t position = 1 + normal, end = position + translated;
     bool unsupported = false;
     while (position < end) {
@@ -91,9 +100,16 @@ static unsigned translation(const SnxCtrIpc* c, uint32_t normal, uint32_t transl
         if (d & 8) {
             if ((d & 15) != 10 && (d & 15) != 12 && (d & 15) != 14) return WIRE_BAD;
             payload = 1;
-            unsupported =
-                !(c->process->objects[c->object].type == CTR_OBJ_FILE && c->in[0] == 0x080200c2 && (d & 15) == 12) ||
-                unsupported;
+            /* Only the checked mapped buffers below are supported: FSFILE
+               Read's writable result buffer and ControlArchive GET_TIMESTAMP's
+               path input and datetime output. Handlers validate exact sizes. */
+            uint32_t mapped_service = c->process->objects[c->object].type == CTR_OBJ_SESSION
+                                          ? c->process->objects[c->object].data.session.service
+                                          : SNX_CTR_SERVICE_FILE;
+            bool mapped_supported =
+                (mapped_service == SNX_CTR_SERVICE_FILE && c->in[0] == 0x080200c2 && (d & 15) == 12) ||
+                (mapped_service == SNX_CTR_SERVICE_FS && c->in[0] == 0x080d0144 && ((d & 15) == 10 || (d & 15) == 12));
+            unsupported = unsupported || !mapped_supported;
         } else if ((d & 1023) == 2 || (d & 15) == 4 || (d & 15) == 6) {
             payload = 1;
             /* Only the explicitly checked APT utility / narrow FS commands
@@ -105,6 +121,7 @@ static unsigned translation(const SnxCtrIpc* c, uint32_t normal, uint32_t transl
             bool supported = (service == SNX_CTR_SERVICE_APT && c->in[0] == 0x004b00c2 && (d & 0x3fff) == 0x402) ||
                              (service == SNX_CTR_SERVICE_FS && c->in[0] == 0x080c00c2 && d == 0x4002) ||
                              (service == SNX_CTR_SERVICE_FS && c->in[0] == 0x080201c2 && d == 0x30002) ||
+                             (service == SNX_CTR_SERVICE_GSP && (c->in[0] == 0x00010082 || c->in[0] == 0x00020084)) ||
                              (service == SNX_CTR_SERVICE_FS && c->in[0] == 0x08030204 &&
                               ((d & 0x3fff) == 2 || (d & 0x3fff) == 0x802));
             unsupported = unsupported || !supported;
@@ -112,7 +129,20 @@ static unsigned translation(const SnxCtrIpc* c, uint32_t normal, uint32_t transl
             payload = 1;
         } else if (!(d & 0x03ffffffu) || (d & 0x03ffffffu) == 0x10) {
             payload = (d >> 26) + 1;
-            unsupported = true;
+            /* Incoming handles: only the checked GSP forms (one shared-handle
+               descriptor) are captured. The handler resolves and type-checks
+               every word; other services stop. */
+            uint32_t service = c->process->objects[c->object].type == CTR_OBJ_SESSION
+                                   ? c->process->objects[c->object].data.session.service
+                                   : SNX_CTR_SERVICE_FILE;
+            bool supported = service == SNX_CTR_SERVICE_GSP && !(d & 0x03ffffffu) && payload == 1 &&
+                             (c->in[0] == 0x00130042 || c->in[0] == 0x00150042 || c->in[0] == 0x00160042 ||
+                              c->in[0] == 0x00080082 || c->in[0] == 0x00090082);
+            if (supported && c->in[position] && !c->handle_in[0])
+                c->handle_in[0] = c->in[position];
+            else if (supported && c->in[position])
+                supported = false;
+            unsupported = unsupported || !supported;
         } else
             return WIRE_BAD;
         if (payload > end - position) return WIRE_BAD;
@@ -163,6 +193,7 @@ SnxCtrSvcResult snx_ctr_ipc_send(SnxCtrProcess* p, uint32_t handle, uint32_t* re
         case SNX_CTR_SERVICE_APT: snx_ctr_apt_dispatch(&c); break;
         case SNX_CTR_SERVICE_PTM: snx_ctr_ptm_dispatch(&c); break;
         case SNX_CTR_SERVICE_HID: snx_ctr_hid_dispatch(&c); break;
+        case SNX_CTR_SERVICE_GSP: snx_ctr_gsp_dispatch(&c); break;
         default: return SNX_CTR_SVC_UNSUPPORTED;
     }
     if (c.state == SNX_CTR_IPC_UNSUPPORTED) return SNX_CTR_SVC_UNSUPPORTED;

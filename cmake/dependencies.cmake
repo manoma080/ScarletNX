@@ -69,6 +69,18 @@ if(SNX_BUILD_NX OR SNX_BUILD_3DS OR SNX_HACTOOL_ONLY)
     include("${CMAKE_SOURCE_DIR}/cmake/openssl.cmake")
 endif()
 
+if((SNX_BUILD_NX AND NOT SNX_TOOLS_ONLY AND NOT SNX_HACTOOL_ONLY) OR SNX_BUILD_3DS)
+    CPMAddPackage(NAME Vulkan-Headers VERSION 1.4.365
+                  URL https://github.com/KhronosGroup/Vulkan-Headers/archive/refs/tags/v1.4.365.tar.gz
+                  URL_HASH SHA256=ed832b3292cce324ebba6522fd2d3004bf1b797fa49bfbcad0b302ff23d56abc
+                  EXCLUDE_FROM_ALL YES)
+    # volk.c is compiled into the vk components, VMA is a header
+    CPMAddPackage(NAME volk VERSION 1.4.363
+                  URL https://github.com/zeux/volk/archive/refs/tags/vulkan-sdk-1.4.363.0.tar.gz
+                  URL_HASH SHA256=1547d8d74395d4048fb3f4a6313da56db626e89b55db238d0d7e8944c8a645f3
+                  DOWNLOAD_ONLY YES)
+endif()
+
 # Extraction-only and tools-only builds do not contain the NX runtime or its graphics/media dependencies.
 if(SNX_BUILD_NX AND NOT SNX_TOOLS_ONLY AND NOT SNX_HACTOOL_ONLY)
     # FFmpeg builds with its own configure and make, which cmake/ffmpeg.cmake runs
@@ -79,15 +91,6 @@ if(SNX_BUILD_NX AND NOT SNX_TOOLS_ONLY AND NOT SNX_HACTOOL_ONLY)
                   DOWNLOAD_ONLY YES)
     include("${CMAKE_SOURCE_DIR}/cmake/ffmpeg.cmake")
 
-    CPMAddPackage(NAME Vulkan-Headers VERSION 1.4.365
-                  URL https://github.com/KhronosGroup/Vulkan-Headers/archive/refs/tags/v1.4.365.tar.gz
-                  URL_HASH SHA256=ed832b3292cce324ebba6522fd2d3004bf1b797fa49bfbcad0b302ff23d56abc
-                  EXCLUDE_FROM_ALL YES)
-    # volk.c is compiled into the vk component, VMA is a header
-    CPMAddPackage(NAME volk VERSION 1.4.363
-                  URL https://github.com/zeux/volk/archive/refs/tags/vulkan-sdk-1.4.363.0.tar.gz
-                  URL_HASH SHA256=1547d8d74395d4048fb3f4a6313da56db626e89b55db238d0d7e8944c8a645f3
-                  DOWNLOAD_ONLY YES)
     CPMAddPackage(NAME VulkanMemoryAllocator VERSION 3.4.0
                   URL https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator/archive/refs/tags/v3.4.0.tar.gz
                   URL_HASH SHA256=822aa850c6ce77346ae96a8a1d351d52e77e85929f35363849a0a4e638e0a2a1
@@ -95,14 +98,14 @@ if(SNX_BUILD_NX AND NOT SNX_TOOLS_ONLY AND NOT SNX_HACTOOL_ONLY)
 endif()
 
 set(SNX_SDL3_FROM_SOURCE OFF)
-if((SNX_BUILD_NX AND NOT SNX_TOOLS_ONLY AND NOT SNX_HACTOOL_ONLY) OR SNX_BUILD_GUI)
+if((SNX_BUILD_NX AND NOT SNX_TOOLS_ONLY AND NOT SNX_HACTOOL_ONLY) OR SNX_BUILD_GUI OR SNX_BUILD_3DS)
     # Prefer a compatible system package. CPM handles the pinned static fallback and user overrides.
     CPMFindPackage(NAME SDL3 VERSION 3.4.18 FIND_PACKAGE_ARGUMENTS CONFIG
                    URL https://github.com/libsdl-org/SDL/archive/refs/tags/release-3.4.18.tar.gz
                    URL_HASH SHA256=c4b08b950bd29d83caae0ab8d884298d27046a9d30700fb42841c50992665c90
                    EXCLUDE_FROM_ALL YES SYSTEM YES
                    OPTIONS "SDL_SHARED OFF" "SDL_STATIC ON" "SDL_TEST_LIBRARY OFF" "SDL_TESTS OFF"
-                           "SDL_EXAMPLES OFF" "SDL_INSTALL OFF")
+                           "SDL_EXAMPLES OFF" "SDL_INSTALL OFF" "SDL_UNIX_CONSOLE_BUILD ON")
     if(SDL3_ADDED)
         set(SNX_SDL3_FROM_SOURCE ON)
         snx_quiet(SDL3-static)

@@ -13,7 +13,8 @@ enum {
     SNX_CTR_SERVICE_APT,
     SNX_CTR_SERVICE_PTM,
     SNX_CTR_SERVICE_HID,
-    SNX_CTR_SERVICE_FILE
+    SNX_CTR_SERVICE_FILE,
+    SNX_CTR_SERVICE_GSP
 };
 typedef enum { SNX_CTR_IPC_RETURN, SNX_CTR_IPC_UNSUPPORTED, SNX_CTR_IPC_BLOCKED, SNX_CTR_IPC_FAULT } SnxCtrIpcState;
 struct SnxCtrProcess;
@@ -25,6 +26,9 @@ typedef struct {
     struct SnxCtrProcess* process;
     uint32_t object, caller_pid, transport_result;
     uint32_t in[SNX_CTR_IPC_WORDS], out[SNX_CTR_IPC_WORDS];
+    /* Bounded incoming handle capture (GSP forms only): raw words, resolved
+       and type-checked by the handler. Zero: none. */
+    uint32_t handle_in[2];
     SnxCtrIpcState state;
 } SnxCtrIpc;
 int snx_ctr_ipc_expect(SnxCtrIpc* c, uint32_t normal, uint32_t translated);

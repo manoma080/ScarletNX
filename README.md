@@ -77,8 +77,10 @@ Larger images now use bounded chunked static CFG compilation (16 MiB text cap).
 SuperTux now completes minimal APT startup with real synchronization/thread
 resources, initializes HID handles and **reaches and executes main**. It then
 opens its reconstructed RomFS using NX's shared filesystem backing, executes
-scalar VFP in `gettimeofday`, then stops at FS's archive timestamp request:
-**no first frame, audio or gameplay**.
+scalar VFP in `gettimeofday`, opens its SelfNCCH archive and stopped at FS's
+archive timestamp request — real timestamp semantics and a minimal Vulkan-only
+GSP/GPU display path (live SDL3 window + PPM frames) now exist.
+**No first frame, audio or gameplay is claimed.**
 Checked CTR IPC uses a separate SwIPC mode; ARM11 exclusives and serialized
 native thread scheduling work. Full VFPv2, cache/resume, HLE and devices remain incomplete. The default
 build still stops after extraction.

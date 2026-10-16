@@ -250,6 +250,71 @@ void snx_ctr_romfs_free(SnxCtrRomfs* r) {
         free(r);
     }
 }
+/* 3DS datetime milliseconds since 1900-01-01; the Unix epoch starts
+   2208988800 seconds later. */
+#define UNIX_EPOCH_1900_MS UINT64_C(2208988800000)
+SnxCtrTimeResult snx_ctr_romfs_time(SnxCtrRomfs* r, const unsigned char* path16, size_t bytes, uint64_t* datetime) {
+    if (!r || !path16 || !datetime || !bytes || (bytes & 1) || bytes > 256) return SNX_CTR_TIME_INVALID;
+    char path[768];
+    unsigned n = 0;
+    bool terminated = false;
+    for (size_t i = 0; i < bytes / 2; ++i) {
+        uint32_t cp = (uint32_t)path16[2 * i] | (uint32_t)path16[2 * i + 1] << 8;
+        if (!cp) {
+            terminated = true;
+            break;
+        }
+        if (cp >= 0xd800 && cp < 0xdc00) {
+            if (++i >= bytes / 2) return SNX_CTR_TIME_INVALID;
+            uint32_t low = (uint32_t)path16[2 * i] | (uint32_t)path16[2 * i + 1] << 8;
+            if (low < 0xdc00 || low >= 0xe000) return SNX_CTR_TIME_INVALID;
+            cp = 0x10000 + ((cp - 0xd800) << 10) + (low - 0xdc00);
+        } else if (cp >= 0xdc00 && cp < 0xe000)
+            return SNX_CTR_TIME_INVALID;
+        if (cp < 0x80)
+            path[n++] = (char)cp;
+        else if (cp < 0x800) {
+            if (n + 2 > 766) return SNX_CTR_TIME_INVALID;
+            path[n++] = (char)(0xc0 | (cp >> 6));
+            path[n++] = (char)(0x80 | (cp & 63));
+        } else if (cp < 0x10000) {
+            if (n + 3 > 766) return SNX_CTR_TIME_INVALID;
+            path[n++] = (char)(0xe0 | (cp >> 12));
+            path[n++] = (char)(0x80 | ((cp >> 6) & 63));
+            path[n++] = (char)(0x80 | (cp & 63));
+        } else {
+            if (n + 4 > 766) return SNX_CTR_TIME_INVALID;
+            path[n++] = (char)(0xf0 | (cp >> 18));
+            path[n++] = (char)(0x80 | ((cp >> 12) & 63));
+            path[n++] = (char)(0x80 | ((cp >> 6) & 63));
+            path[n++] = (char)(0x80 | (cp & 63));
+        }
+    }
+    if (!terminated) return SNX_CTR_TIME_INVALID;
+    path[n] = 0;
+    for (unsigned i = 0; i < n; ++i)
+        if (path[i] == '\\') path[i] = '/'; /* FS archive paths accept either separator */
+    const char* relative = path;
+    while (*relative == '/') ++relative;
+    pm_lock(&r->tree->lock);
+    FsNode *root = NULL, *node = root;
+    SnxCtrTimeResult result = SNX_CTR_TIME_NOTFOUND;
+    if (fs_tree_lookup(r->tree, NULL, "romfs", &root) == FS_TREE_OK && root && root->is_dir) {
+        node = root;
+        if (*relative && fs_tree_lookup(r->tree, root, relative, &node) != FS_TREE_OK) node = NULL;
+        if (node) {
+            uint64_t unix_ms = 0;
+            if (fs_tree_mtime(r->tree, node, &unix_ms) == FS_TREE_OK && unix_ms <= UINT64_MAX - UNIX_EPOCH_1900_MS) {
+                *datetime = unix_ms + UNIX_EPOCH_1900_MS;
+                result = SNX_CTR_TIME_OK;
+            } else
+                result = SNX_CTR_TIME_INVALID;
+        }
+    } else
+        result = SNX_CTR_TIME_INVALID;
+    pm_unlock(&r->tree->lock);
+    return result;
+}
 uint64_t snx_ctr_romfs_size(const SnxCtrRomfs* r) {
     if (!r) return 0;
     pm_lock(&r->tree->lock);

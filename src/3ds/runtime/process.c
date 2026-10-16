@@ -16,6 +16,7 @@ static bool map(SnxCtrProcess* p, uint32_t va, uint32_t size, unsigned permissio
 }
 void snx_ctr_process_free(SnxCtrProcess* p) {
     if (!p) return;
+    free(p->gsp.regs);
     snx_ctr_romfs_free(p->romfs);
     snx_ctr_space_free(p->space);
     snx_ctr_memory_free(p->memory);
@@ -108,6 +109,18 @@ fail:
 }
 bool snx_ctr_process_mount_fs(SnxCtrProcess* p, const char* directory) {
     return p && !p->romfs && snx_ctr_romfs_open(directory, &p->romfs);
+}
+/* HLE shared pages come from board FCRAM past the application pool, outside
+   pool accounting: each call reserves the next page-aligned block. */
+uint32_t snx_ctr_shared_pages(SnxCtrProcess* p, uint32_t size) {
+    if (!p || !size || (size & 4095)) return 0;
+    const SnxCtrProfile* profile = snx_ctr_memory_profile(p->memory);
+    uint32_t limit = CTR_PHYS_BASE + profile->fcram_size;
+    if (!p->physical_shared) p->physical_shared = p->physical_end;
+    if ((uint64_t)p->physical_shared + size > limit) return 0;
+    uint32_t at = p->physical_shared;
+    p->physical_shared += size;
+    return at;
 }
 SnxArmCPU* snx_ctr_process_cpu(SnxCtrProcess* p) { return p ? &p->cpu.state.cpu : NULL; }
 SnxCtrAddressSpace* snx_ctr_process_space(SnxCtrProcess* p) { return p ? p->space : NULL; }

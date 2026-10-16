@@ -133,9 +133,37 @@ RomFS metadata. Only extracted `romfs/` is exposed; no original container reads.
 Writes, general archives/paths and SD/save backing remain unsupported. Reads
 preflight the complete guest destination and stage host IO before publication.
 Host-paced GetSystemTick and a read-only UTC shared-page snapshot support time
-queries, not cycle accuracy or timers. Unknown commands stop; absent-service
+queries, not cycle accuracy or timers. FSUSER ControlArchive GET_TIMESTAMP
+(`0x80d`) resolves a bounded UTF-16 archive path and returns the real backing
+file's host modification time as a 3DS datetime (milliseconds since 1900 UTC);
+missing paths return `0xc8804478`, stale tokens `0xc8804465`, and save-commit or
+unknown actions stop. Unknown commands stop; absent-service
 waits block without a fake response. SuperTux's next blocker is the archive
 timestamp control request; no timestamp is fabricated.
+
+`gsp::Gpu` is modeled with real bounded resources: RegisterInterruptRelayQueue
+returns the genuine `0x2a07` first-initialization result, one writable 0x1000
+GX/interrupt shared block and up to four relay threads with real interrupt-queue
+slots and guest-created events. AcquireRight/TryAcquireRight/ReleaseRight own a
+single right; WriteHWRegs/WithMask update a checked 4 KiB GX/LCD register file;
+FlushDataCache/InvalidateDataCache are coherent no-ops behind a real process
+handle check. TriggerCmdReqQueue executes RequestDma and MemoryFill as whole-span
+checked RAM transactions and CacheFlush as a coherent no-op; PICA SubmitCmdList,
+DisplayTransfer and TextureCopy stop explicitly. SetBufferSwap latches real
+framebuffer descriptors (RGBA8/RGB565; other layouts stop rather than being
+shown with invented colors). Display timing is host-paced 60 Hz: latched frames
+present at vblank waits and overdue swaps, and waits on the relay event complete
+only at real vblank deliveries. QueryMemory (SVC `0x02`) reports actual mapping
+regions with coarse free/IO/static/code/private/shared classes, MapMemoryBlock
+accepts the guest mappable range and registers mappings, and HLE shared pages
+are reserved from board FCRAM past the application pool.
+
+Presentation is **Vulkan only** (volk; no linked Vulkan library, no shaders):
+the device converts the guest framebuffer to RGBA8 and shows the landscape-
+rotated frame live in an SDL3 Vulkan window through a real swapchain. Bounded
+PPM snapshots land in `<output>/frames` in every mode. Without a display the
+window path is unavailable and frames are only recorded; without a Vulkan
+device the presenter reports unavailability and no frame is fabricated.
 
 See [CTR IPC](CTR-IPC.md) for the strict generator subset, descriptor/permission
 checks, quotas, malformed-request policy, tests and unimplemented operations.

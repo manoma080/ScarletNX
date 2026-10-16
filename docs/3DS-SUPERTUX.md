@@ -5,8 +5,9 @@
 The supplied SuperTux CIA now **reaches and executes `main`**, at `0x00167d88`
 after **50,489 native blocks**. Its SelfNCCH RomFS open succeeds using NX's
 shared indexed host filesystem. It executes scalar VFPv2 in `gettimeofday`
-and opens a genuine SelfNCCH archive binding. It stops explicitly at **50,629
-blocks** on FS `ControlArchive`'s timestamp request, before the first FS read.
+and opens a genuine SelfNCCH archive binding. Last probed it stopped at
+**50,629 blocks** on FS `ControlArchive`'s timestamp request; real timestamp
+semantics and the GSP/GPU display path now exist, so the next probe advances.
 **No first frame, audio or gameplay is claimed.**
 There are no title-specific runtime hooks, patched instructions, interpreter,
 runtime target discovery or runtime compilation.
@@ -103,9 +104,15 @@ are trusted host code, not sandboxed or signature-authenticated by ABI/hash chec
     GetSystemTick (`0x28`), then executes scalar VFPv2 conversions/arithmetic.
     The offline CFG follows VFP fallthrough; no target is discovered at runtime.
 11. `OpenArchive` on SelfNCCH returns an owned, FS-private 64-bit token backed
-    by the process' real RomFS. `ControlArchive` then requests a file timestamp
-    (action 1, 12-byte input / 8-byte output). That operation stops explicitly;
-    a zero timestamp or fabricated successful control reply is not substituted.
+    by the process' real RomFS. `ControlArchive` GET_TIMESTAMP returns the
+    backing file's real host modification time as a 3DS datetime (bounded
+    UTF-16 path, `/` and `\` separators); save commits and unknown actions stop.
+12. `gsp::Gpu` supplies a real 0x1000 GX/interrupt shared block, relay threads,
+    a checked GX/LCD register file and a host-paced 60 Hz display. GX
+    MemoryFill and DMA run as whole-span checked RAM transactions; PICA command
+    lists and format-converting transfers stop explicitly. Vulkan-only
+    presentation shows the landscape frame live in an SDL3 window and records
+    bounded PPM snapshots in `<output>/frames`. No title frame yet.
 
 See [CTR IPC](CTR-IPC.md) for the deliberately narrow buffer/service policies.
 The full APT lifecycle, applets, SD/save mounting, writable archives and general
@@ -142,8 +149,9 @@ build-tree archive lookup. Generated modules do not depend on LLVM. Default
 A57 ARM/Thumb O0/O2 objects remain byte-identical; public CPU/checked/module
 ABIs remain 2/1/1.
 
-Next: real archive timestamp/control semantics, then minimal GSP/GPU and
-human-reviewed visual output. Further HID work and DSP/audio are deferred.
+Next: advance the title through its remaining startup (real archive timestamps
+and the GSP/GPU display path are now in) toward a human-reviewed first frame.
+Further HID work and DSP/audio are deferred.
 Full VFPv2 (short vectors/exception traps), timers/time
 slicing, full thread lifecycle/multicore, broad
 resource/capability policy, general IPC buffers and broader static coverage are

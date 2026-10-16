@@ -9,6 +9,10 @@
 #include <string.h>
 #if defined(__unix__)
 #include <sys/resource.h>
+#include <sys/stat.h>
+#endif
+#if defined(_WIN32)
+#include <windows.h>
 #endif
 #define CMD (SNX_CTR_INITIAL_TLS + 0x80)
 static void word(SnxCtrProcess* p, uint32_t address, uint32_t v) {
@@ -113,6 +117,117 @@ static void archives(SnxCtrProcess* p, uint32_t fs, bool absent) {
     for (unsigned i = 0; i < CTR_SELF_ARCHIVES; ++i) assert(!p->self_archives[i].token);
     p->archive_sequence = serial;
 }
+/* The backing file's real host modification time, computed independently here
+   from the host stat/FILETIME and compared with both the ControlArchive wire
+   reply and the RomFS API result. */
+static uint64_t host_datetime(const char* path) {
+#if defined(_WIN32)
+    WIN32_FILE_ATTRIBUTE_DATA data;
+    assert(GetFileAttributesExA(path, GetFileExInfoStandard, &data));
+    ULARGE_INTEGER time = {.LowPart = data.ftLastWriteTime.dwLowDateTime,
+                           .HighPart = data.ftLastWriteTime.dwHighDateTime};
+    assert(time.QuadPart >= UINT64_C(116444736000000000));
+    return (time.QuadPart - UINT64_C(116444736000000000)) / 10000 + UINT64_C(2208988800000);
+#else
+    struct stat st;
+    assert(!stat(path, &st) && st.st_mtime >= 0);
+    return (uint64_t)st.st_mtime * 1000 + (uint64_t)st.st_mtim.tv_nsec / 1000000 + UINT64_C(2208988800000);
+#endif
+}
+static uint64_t get64(SnxCtrProcess* p, uint32_t address) {
+    unsigned char b[8];
+    assert(snx_ctr_read_ram(p->space, address, b, sizeof b) == SNX_CTR_MEM_OK);
+    uint64_t v = 0;
+    for (unsigned i = 0; i < 8; ++i) v |= (uint64_t)b[i] << (i * 8);
+    return v;
+}
+static void enc16(unsigned char* b, const uint16_t* units, unsigned bytes) {
+    assert(bytes <= 256);
+    for (unsigned i = 0; i < bytes; ++i) b[i] = (unsigned char)(units[i / 2] >> ((i & 1) * 8));
+}
+static void utf16(SnxCtrProcess* p, uint32_t address, const uint16_t* units, unsigned bytes) {
+    unsigned char b[256];
+    enc16(b, units, bytes);
+    assert(snx_ctr_write_ram(p->space, address, b, bytes) == SNX_CTR_MEM_OK);
+}
+static void timestamps(SnxCtrProcess* p, uint32_t fs, const char* directory) {
+    uint32_t a[] = {0x80c00c2, 3, 1, 1, 0x4002, 0x300020};
+    request(p, fs, a, 6, SNX_CTR_SVC_RETURN, 0);
+    assert(!get(p, 1));
+    uint32_t lo = get(p, 2), hi = get(p, 3);
+    char* hello_path = snx_path_join(directory, "romfs/hello.txt");
+    char* root_path = snx_path_join(directory, "romfs");
+    uint64_t hello = host_datetime(hello_path), root = host_datetime(root_path);
+    free(hello_path);
+    free(root_path);
+    static const uint16_t hello16[] = {'h', 'e', 'l', 'l', 'o', '.', 't', 'x', 't', 0};
+    static const uint16_t slashed16[] = {'\\', 'h', 'e', 'l', 'l', 'o', '.', 't', 'x', 't', 0};
+    static const uint16_t root16[] = {0};
+    static const uint16_t missing16[] = {'n', 'o', 'p', 'e', 0};
+    static const uint16_t bad16[] = {0xd800, 0};
+    uint32_t cmd[] = {0x80d0144, lo, hi, 1, 20, 8, (20u << 4) | 10, 0x300400, (8u << 4) | 12, 0x300500};
+    utf16(p, 0x300400, hello16, 20);
+    request(p, fs, cmd, 10, SNX_CTR_SVC_RETURN, 0);
+    assert(get(p, 0) == 0x080d0040 && !get(p, 1));
+    assert(get64(p, 0x300500) == hello && hello > 2208988800000ull);
+    uint64_t api = 0;
+    unsigned char raw[256];
+    enc16(raw, hello16, 20);
+    assert(snx_ctr_romfs_time(p->romfs, raw, 20, &api) == SNX_CTR_TIME_OK && api == hello);
+    utf16(p, 0x300400, slashed16, 22);
+    cmd[4] = 22;
+    cmd[6] = (22u << 4) | 10;
+    request(p, fs, cmd, 10, SNX_CTR_SVC_RETURN, 0);
+    assert(!get(p, 1) && get64(p, 0x300500) == hello); /* \ separator resolves the same backing file */
+    utf16(p, 0x300400, root16, 2);
+    cmd[4] = 2;
+    cmd[6] = (2u << 4) | 10;
+    request(p, fs, cmd, 10, SNX_CTR_SVC_RETURN, 0);
+    assert(!get(p, 1) && get64(p, 0x300500) == root);
+    enc16(raw, root16, 2);
+    assert(snx_ctr_romfs_time(p->romfs, raw, 2, &api) == SNX_CTR_TIME_OK && api == root);
+    word(p, 0x300500, 0xdeadbeef);
+    utf16(p, 0x300400, missing16, 10);
+    cmd[4] = 10;
+    cmd[6] = (10u << 4) | 10;
+    request(p, fs, cmd, 10, SNX_CTR_SVC_RETURN, 0);
+    assert(get(p, 1) == 0xc8804478 && get(p, 0) == 0x080d0040 && (uint32_t)get64(p, 0x300500) == 0xdeadbeef);
+    enc16(raw, missing16, 10);
+    assert(snx_ctr_romfs_time(p->romfs, raw, 10, &api) == SNX_CTR_TIME_NOTFOUND);
+    utf16(p, 0x300400, bad16, 4);
+    cmd[4] = 4;
+    cmd[6] = (4u << 4) | 10;
+    request(p, fs, cmd, 10, SNX_CTR_SVC_UNSUPPORTED, 0); /* unpaired surrogate is not a path */
+    enc16(raw, bad16, 4);
+    assert(snx_ctr_romfs_time(p->romfs, raw, 4, &api) == SNX_CTR_TIME_INVALID);
+    cmd[3] = 0;
+    request(p, fs, cmd, 10, SNX_CTR_SVC_UNSUPPORTED, 0); /* save commit needs a save archive */
+    cmd[3] = 1;
+    cmd[4] = 3;
+    cmd[6] = (3u << 4) | 10;
+    request(p, fs, cmd, 10, SNX_CTR_SVC_UNSUPPORTED, 0); /* odd path size */
+    cmd[4] = 20;
+    cmd[6] = (20u << 4) | 10;
+    request(p, fs, cmd, 10, SNX_CTR_SVC_UNSUPPORTED, 0); /* stale bytes are not the earlier path */
+    cmd[6] = (20u << 4) | 11;
+    request(p, fs, cmd, 10, SNX_CTR_SVC_RETURN, SNX_CTR_IPC_BAD_DESCRIPTOR);
+    cmd[6] = (20u << 4) | 10;
+    cmd[7] = 0x304000;
+    request(p, fs, cmd, 10, SNX_CTR_SVC_RETURN, 0xe0e01bf5); /* unmapped path input */
+    cmd[7] = 0x300400;
+    cmd[9] = 0x100000;
+    request(p, fs, cmd, 10, SNX_CTR_SVC_RETURN, 0xe0e01bf5); /* read-only output span */
+    cmd[9] = 0x300500;
+    cmd[1] = lo + 0x1000;
+    request(p, fs, cmd, 10, SNX_CTR_SVC_RETURN, 0);
+    assert(get(p, 1) == 0xc8804465); /* stale archive token */
+    cmd[1] = lo;
+    uint32_t close[] = {0x80e0080, lo, hi};
+    request(p, fs, close, 3, SNX_CTR_SVC_RETURN, 0);
+    assert(!get(p, 1));
+    request(p, fs, cmd, 10, SNX_CTR_SVC_RETURN, 0);
+    assert(get(p, 1) == 0xc8804465); /* timestamps need a live binding */
+}
 int main(int argc, char** argv) {
     assert(argc == 4);
 #if defined(__unix__)
@@ -143,6 +258,7 @@ int main(int argc, char** argv) {
         assert(!get(p, 1));
         unsigned before = objects(p);
         archives(p, fs, absent);
+        if (!absent) timestamps(p, fs, argv[1]);
         if (absent) {
             request(p, fs, open, 13, SNX_CTR_SVC_RETURN, 0);
             assert(get(p, 1) == 0xc8804464 && objects(p) == before);
@@ -175,7 +291,10 @@ int main(int argc, char** argv) {
         uint64_t size = (uint64_t)get(p, 2) | (uint64_t)get(p, 3) << 32;
         assert(size && size < 12000);
         assert(get(p, 0) == 0x80400c0 && size == snx_ctr_romfs_size(p->romfs));
-        unsigned char *expected = malloc((size_t)size), *actual = malloc((size_t)size);
+        /* the fixed 256-byte negative-read patterns below need 256 bytes even
+           when a tiny fixture's whole RomFS view is smaller */
+        size_t alloc = size < 256 ? 256 : (size_t)size;
+        unsigned char *expected = malloc(alloc), *actual = malloc(alloc);
         assert(expected && actual);
         assert(snx_ctr_romfs_read(p->romfs, 0, expected, (size_t)size));
         uint32_t read[] = {0x80200c2, 0, 0, (uint32_t)size, (uint32_t)size << 4 | 12, 0x300800};

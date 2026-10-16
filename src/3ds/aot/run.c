@@ -3,6 +3,8 @@
 #include "ctr_module.h"
 #include "common.h"
 #include "runtime/internal.h"
+#include "gpu/present.h"
+#include "filesystem/host.h"
 #include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -12,7 +14,7 @@ int snx_ctr_aot_run(const char* driver, const char* directory, SnxCtrModel model
     SnxCtrImage image = {0};
     SnxCtrProcess* process = NULL;
     SnxCtrNative native = {0};
-    char *executable = NULL, *parent = NULL, *compiler = NULL, *module_path = NULL;
+    char *executable = NULL, *parent = NULL, *compiler = NULL, *module_path = NULL, *frames = NULL;
     int result = 1;
     if (!snx_ctr_image_load(directory, &image, error, error_size)) goto done;
     executable = snx_executable(driver);
@@ -46,6 +48,14 @@ int snx_ctr_aot_run(const char* driver, const char* directory, SnxCtrModel model
         snprintf(error, error_size, "cannot index extracted title filesystem");
         goto done;
     }
+    /* Vulkan-only presentation: real frames land in <output>/frames as PPM.
+       Without a Vulkan loader/device no frame is shown or fabricated. */
+    frames = snx_path_join(directory, "frames");
+    if (!frames || plat_mkdir(frames)) {
+        snprintf(error, error_size, "cannot create frame output directory");
+        goto done;
+    }
+    if (!snx_ctr_present_init(frames)) printf("Vulkan presenter unavailable: no frames will be shown or saved\n");
     uint64_t executed;
     printf("Running ARM11 static AOT\n");
     SnxCtrRunResult state = snx_ctr_dispatch(native.module, process, limit, &executed);
@@ -66,7 +76,9 @@ int snx_ctr_aot_run(const char* driver, const char* directory, SnxCtrModel model
         result = state == SNX_CTR_RUN_FAULT ? 1 : 3;
     }
 done:
+    snx_ctr_present_free();
     snx_ctr_process_free(process);
+    free(frames);
     snx_ctr_native_close(&native);
     free(module_path);
     free(compiler);

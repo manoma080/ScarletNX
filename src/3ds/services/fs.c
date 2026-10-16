@@ -156,11 +156,58 @@ static void open_archive(SnxCtrIpc* c) {
         }
     snx_ctr_ipc_error_reply(c, 0xd0401834u);
 }
+/* FSUSER ControlArchive. Only GET_TIMESTAMP (action 1) on a live SelfNCCH
+   binding is implemented: the real backing file's host modification time as a
+   3DS datetime. Commit/save actions and unknown actions stop. */
+static void control_archive(SnxCtrIpc* c) {
+    if (!snx_ctr_ipc_expect(c, 5, 4)) return;
+    SnxCtrProcess* p = c->process;
+    if (!initialized(c)) {
+        snx_ctr_ipc_error_reply(c, SNX_CTR_IPC_INVALID_STATE);
+        return;
+    }
+    if (!archive(p, (uint64_t)c->in[1] | (uint64_t)c->in[2] << 32)) {
+        snx_ctr_ipc_error_reply(c, 0xc8804465u);
+        return;
+    }
+    if (c->in[3] != 1 || c->in[5] != 8 || c->in[4] < 2 || c->in[4] > 256 || (c->in[4] & 1) ||
+        c->in[6] != ((c->in[4] << 4) | 10) || c->in[8] != ((8u << 4) | 12)) {
+        c->state = SNX_CTR_IPC_UNSUPPORTED;
+        return;
+    }
+    if (!p->romfs) {
+        snx_ctr_ipc_error_reply(c, 0xc8804464u);
+        return;
+    }
+    unsigned char path[256], out[8];
+    if (snx_ctr_read_ram(p->space, c->in[7], path, c->in[4]) != SNX_CTR_MEM_OK ||
+        snx_ctr_check_ram(p->space, c->in[9], sizeof out, SNX_CTR_WRITE) != SNX_CTR_MEM_OK) {
+        c->transport_result = 0xe0e01bf5u;
+        return;
+    }
+    uint64_t datetime = 0;
+    SnxCtrTimeResult result = snx_ctr_romfs_time(p->romfs, path, c->in[4], &datetime);
+    if (result == SNX_CTR_TIME_NOTFOUND) {
+        snx_ctr_ipc_error_reply(c, 0xc8804478u);
+        return;
+    }
+    if (result != SNX_CTR_TIME_OK) {
+        c->state = SNX_CTR_IPC_UNSUPPORTED;
+        return;
+    }
+    for (unsigned i = 0; i < 8; ++i) out[i] = (unsigned char)(datetime >> (i * 8));
+    if (snx_ctr_write_ram(p->space, c->in[9], out, sizeof out) != SNX_CTR_MEM_OK) {
+        c->state = SNX_CTR_IPC_FAULT;
+        return;
+    }
+    c->out[0] = 0x080d0040;
+}
 void snx_ctr_fs_dispatch(SnxCtrIpc* c) {
     switch (c->in[0] >> 16) {
         case 0x802: open_file(c); break;
         case 0x803: open_direct(c); break;
         case 0x80c: open_archive(c); break;
+        case 0x80d: control_archive(c); break;
         default: snx_ctr_fs_wire_dispatch(c); break;
     }
 }
