@@ -1,5 +1,15 @@
 # Architecture
 
+## Index
+
+* [Runtime boundaries](#runtime-boundaries)
+* [Recompiler + module ABI](#recompiler--module-abi)
+* [Runtime ownership](#runtime-ownership)
+  * [Guest exec](#guest-exec)
+  * [GPU submit/present](#gpu-submitpresent)
+  * [Renderer coherence + lifetime](#renderer-coherence--lifetime)
+  * [Videodec/VIC channels](#videodecvic-channels)
+
 ScarletNX AOT: AArch64 -> C -> native module, shared by Horizon HLE/Maxwell
 and CPU-only Linux AArch64 ABI runtimes.
 Source map: [CLAUDE.md](../CLAUDE.md).

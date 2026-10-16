@@ -1,5 +1,11 @@
 # The recompiler as a library
 
+## Index
+
+* [Build and install](#build-and-install)
+* [Use](#use)
+* [Limits](#limits)
+
 The recompiler can be used on its own, without the Switch runtime (HLE, GPU) or the
 GNU ABI runtime: a program hands it ARM64 (A64) machine code in memory, gets host
 code loaded into its own process, and runs that code on CPU states it owns, with its

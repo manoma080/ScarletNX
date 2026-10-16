@@ -2,6 +2,17 @@
 <!-- Copyright 2026 the ScarletNX contributors -->
 # Usage
 
+## Index
+
+* [Extract → AOT → run](#extract--aot--run)
+  * [NRO applications](#nro-applications)
+* [GDB (UNIX only)](#gdb-unix-only)
+* [Headless Vulkan / lavapipe](#headless-vulkan--lavapipe)
+* [AppImage / display](#appimage--display)
+* [Folders](#folders)
+* [Settings / input](#settings--input)
+  * [On-screen controls](#on-screen-controls)
+
 Setup: [BUILD](BUILD.md). Checkout CWD; own dumps/keys.
 For the keyboard-controlled SDL3 menu and file drops, see [GUI](GUI.md).
 

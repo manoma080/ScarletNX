@@ -2,6 +2,14 @@
 <!-- Copyright 2026 the ScarletNX contributors -->
 # GUI launcher
 
+## Index
+
+* [Selecting an executable from games/](#selecting-an-executable-from-games)
+* [Output and resource use](#output-and-resource-use)
+* [Themes](#themes)
+  * [Theme formats](#theme-formats)
+* [Building and testing](#building-and-testing)
+
 `scarletnx-gui` is a small SDL3 launcher for the command-line drivers. It uses an
 embedded public-domain 8x16 VGA BIOS font, nearest-neighbor integer scaling, and
 English text only. No font files or localization packages are needed.

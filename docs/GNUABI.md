@@ -1,5 +1,12 @@
 # Linux AArch64 GNU ABI runtime
 
+## Index
+
+* [Build and run](#build-and-run)
+* [Implemented scope](#implemented-scope)
+* [Differential validation and fuzzing](#differential-validation-and-fuzzing)
+* [ABI references](#abi-references)
+
 ScarletNX executes static Linux AArch64 ELF programs with its existing ARM64-to-C
 recompiler. `scarletnx-gnuabi` loads the ELF, translates executable ranges into a
 temporary native module with host Clang, and runs that module with Linux runtime

@@ -2,6 +2,19 @@
 <!-- Copyright 2026 the ScarletNX contributors -->
 # Cortex-A57 / AArch64 divergences
 
+## Index
+
+* [Verdict and scope](#verdict-and-scope)
+* [Public PDF references and profile selection](#public-pdf-references-and-profile-selection)
+  * [Not available on the base Cortex-A57](#not-available-on-the-base-cortex-a57)
+* [Corrections made in this follow-up](#corrections-made-in-this-follow-up)
+* [Remaining base-instruction failures](#remaining-base-instruction-failures)
+  * [FP arithmetic, fused operations and square root](#fp-arithmetic-fused-operations-and-square-root)
+  * [FP/integer and FP-format conversions](#fpinteger-and-fp-format-conversions)
+  * [Estimates and refinement](#estimates-and-refinement)
+* [System and memory-model limitations](#system-and-memory-model-limitations)
+* [Evidence and reproduction](#evidence-and-reproduction)
+
 ## Verdict and scope
 
 **ScarletNX is not a fully conforming Cortex-A57 CPU implementation.** The

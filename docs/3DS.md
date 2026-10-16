@@ -2,6 +2,20 @@
 <!-- Copyright 2026 the ScarletNX contributors -->
 # Nintendo 3DS port
 
+## Index
+
+* [Status: stage 1 + stage 2a + initial stage 2b](#status-stage-1--stage-2a--initial-stage-2b)
+  * [Current limits and trust](#current-limits-and-trust)
+  * [Build and test](#build-and-test)
+* [Source provenance and licensing](#source-provenance-and-licensing)
+* [Boundaries and prerequisites for stage 2b](#boundaries-and-prerequisites-for-stage-2b)
+* [Staged roadmap (2a implemented; 2b partially implemented)](#staged-roadmap-2a-implemented-2b-partially-implemented)
+  * [2. CIA extraction, memory controller and static execution](#2-cia-extraction-memory-controller-and-static-execution)
+  * [3. Basic HLE OS and a SwIPC-derived generator](#3-basic-hle-os-and-a-swipc-derived-generator)
+  * [4. Audio DSP](#4-audio-dsp)
+  * [5. Video graphics](#5-video-graphics)
+  * [6. HID and remaining peripherals](#6-hid-and-remaining-peripherals)
+
 ## Status: stage 1 + stage 2a + initial stage 2b
 
 `scarletnx-3ds` can extract **decrypted application CIAs**. It is not yet a

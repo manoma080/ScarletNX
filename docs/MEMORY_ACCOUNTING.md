@@ -2,6 +2,13 @@
 <!-- Copyright 2026 the ScarletNX contributors -->
 # Application memory accounting
 
+## Index
+
+* [Implemented behavior](#implemented-behavior)
+* [Remaining HLE differences](#remaining-hle-differences)
+* [References](#references)
+* [Validation](#validation)
+
 This change targets the heap rejection seen during Super Mario Odyssey startup. A
 3200 MiB request was refused because the runtime charged a fixed 256 MiB in
 addition to the requested heap against a 3285 MiB application budget. The game

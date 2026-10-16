@@ -1,5 +1,12 @@
 # Shared networking
 
+## Index
+
+* [Layout and translation tables](#layout-and-translation-tables)
+* [Runtime behavior](#runtime-behavior)
+* [Current limitations](#current-limitations)
+* [Tests](#tests)
+
 `src/common/network` is the C networking backend used by both runtimes. TCP and UDP
 use host sockets; ICMP echo has a partial emulation for hosts that refuse raw
 sockets. Host descriptors are never exposed directly to guests.
